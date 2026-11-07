@@ -100,6 +100,23 @@ import armada_perf as ap
 import armada_game_tweaks as gt
 import armada_turnip as at
 
+# The unit tests for affinity, cpulist parsing, and presets assume an 8-core
+# topology (cores 0-7, big 3-7, prime 7, little 0-2). Mock online_cpus and
+# sched affinity so the test suite passes predictably on machines with any
+# host CPU count (e.g. 4, 16, 128 cores).
+_fake_affinity = set(range(8))
+_orig_sched_getaffinity = os.sched_getaffinity
+_orig_sched_setaffinity = os.sched_setaffinity
+os.sched_getaffinity = lambda pid: set(_fake_affinity) if pid == 0 else _orig_sched_getaffinity(pid)
+def _mock_sched_setaffinity(pid, mask):
+    global _fake_affinity
+    if pid == 0:
+        _fake_affinity = set(mask)
+        return
+    _orig_sched_setaffinity(pid, mask)
+os.sched_setaffinity = _mock_sched_setaffinity
+ap.online_cpus = lambda: list(range(8))
+
 gt.DEFAULTS_CONFIG = pathlib.Path(TWEAKS_DEFAULTS)
 gt.OVERRIDES_CONFIG = pathlib.Path(WORK) / "missing-game-tweaks.json"
 
