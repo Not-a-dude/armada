@@ -892,7 +892,7 @@
 &usb_1 {
 	/* USB 2.0 only */
 	qcom,select-utmi-as-pipe-clk;
-	status = "disabled";
+	status = "okay";
 };
 
 &usb_1_dwc3 {
