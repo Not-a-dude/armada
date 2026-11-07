@@ -343,3 +343,4 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1304-drm-panel-huaxing-ft8756.patch
 1305-input-touchscreen-ft8756.patch
 1306-efi-libstub-verbose-debug.patch
+1307-firmware-qcom-tzmem-disable-SHM-bridge-for-SM7125.patch

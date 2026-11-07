@@ -1262,3 +1262,8 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   upstream: local
   notes: Force efi_loglevel to debug and add granular diagnostics across ARM64 EFI stub boot phases (image addresses, relocation, GOP primary display, initrd, FDT preparation, and ExitBootServices).
 
+- `patches/1307-firmware-qcom-tzmem-disable-SHM-bridge-for-SM7125.patch`
+  source: https://git.kernel.org/torvalds/c/e2467151dcab02a7b134eac32b74fb8267bc2a24
+  upstream: https://lore.kernel.org/r/20260910-sm7125-samsung-v3-2-c467bea0fb9c@gmail.com
+  notes: Not in 7.2.6. arm64 defconfig selects QCOM_TZMEM_MODE_SHMBRIDGE and the miatoll DTs only list `qcom,sm7125`, so the existing `qcom,sc7180` entry does not match; without this, the rmtfs memory assignment stalls during initcalls and boot hangs silently.
+
