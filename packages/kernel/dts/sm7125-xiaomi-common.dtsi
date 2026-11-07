@@ -411,7 +411,8 @@
 };
 
 &mdss_dsi0_phy {
-	status = "disabled";
+	vdds-supply = <&vreg_l4a_0p88>;
+	status = "okay";
 };
 
 &gpu {
