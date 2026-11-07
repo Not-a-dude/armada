@@ -1,0 +1,31 @@
+From e2467151dcab02a7b134eac32b74fb8267bc2a24 Mon Sep 17 00:00:00 2001
+From: Vitalii Skorkin <nikroksm@mail.ru>
+Date: Thu, 10 Sep 2026 15:27:22 +0300
+Subject: firmware: qcom: tzmem: disable SHM bridge for SM7125 platform
+
+Currently SHM bridge causes RCU stalls when booting. Disable it for
+SM7125 until a fix is available.
+
+Signed-off-by: Vitalii Skorkin <nikroksm@mail.ru>
+Reviewed-by: Dmitry Baryshkov <dmitry.baryshkov@oss.qualcomm.com>
+Acked-by: Bartosz Golaszewski <bartosz.golaszewski@oss.qualcomm.com>
+Signed-off-by: Erikas Bitovtas <xerikasxx@gmail.com>
+Link: https://patch.msgid.link/20260910-sm7125-samsung-v3-2-c467bea0fb9c@gmail.com
+Signed-off-by: Bjorn Andersson <andersson@kernel.org>
+---
+ drivers/firmware/qcom/qcom_tzmem.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/firmware/qcom/qcom_tzmem.c b/drivers/firmware/qcom/qcom_tzmem.c
+index ebcdee3c59757..44cf80c84d7fa 100644
+--- a/drivers/firmware/qcom/qcom_tzmem.c
++++ b/drivers/firmware/qcom/qcom_tzmem.c
+@@ -82,6 +82,7 @@ static const char *const qcom_tzmem_blacklist[] = {
+ 	"qcom,sc8180x",
+ 	"qcom,sdm670", /* failure in GPU firmware loading */
+ 	"qcom,sdm845", /* reset in rmtfs memory assignment */
++	"qcom,sm7125", /* hang in rmtfs memory assignment */
+ 	"qcom,sm7150", /* reset in rmtfs memory assignment */
+ 	"qcom,sm8150", /* reset in rmtfs memory assignment */
+ 	NULL
+-- 
