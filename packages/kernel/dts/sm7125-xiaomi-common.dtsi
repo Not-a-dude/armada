@@ -441,7 +441,7 @@
 	qcom,cabc;
 	qcom,cabc-sel = <1>;
 	qcom,num-strings = <3>;
-	status = "disabled";
+	status = "okay";
 };
 
 &pm6150_resin {
@@ -912,7 +912,7 @@
 	vdd-supply = <&vreg_l4a_0p88>;
 	vdda-phy-dpdm-supply = <&vreg_l17a_3p1>;
 	vdda-pll-supply = <&vreg_l11a_1p8>;
-	status = "disabled";
+	status = "okay";
 };
 
 &venus {
