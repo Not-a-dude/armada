@@ -881,13 +881,13 @@
 	vcc-max-microamp = <600000>;
 	vccq2-supply = <&vreg_l12a_1p8>;
 	vccq2-max-microamp = <600000>;
-	status = "disabled";
+	status = "okay";
 };
 
 &ufs_mem_phy {
 	vdda-phy-supply = <&vreg_l4a_0p88>;
 	vdda-pll-supply = <&vreg_l3c_1p23>;
-	status = "disabled";
+	status = "okay";
 };
 
 &usb_1 {
