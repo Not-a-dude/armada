@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2023, Joe Mason <buddyjojo06@outlook.com>
+ * Copyright (C) 2025 Vitalii Skorkin <nikroksm@mail.ru>
+ */
+
+/dts-v1/;
+
+#include "sm7125-xiaomi-common.dtsi"
+
+/ {
+	compatible = "xiaomi,miatoll", "xiaomi,curtana", "qcom,sm7125";
+	/* required for bootloader to select correct board */
+	qcom,board-id = <0x20022 1>;
+
+	ultra_avdd_2p8: regulator-ultra-avdd-2p8 {
+		compatible = "regulator-fixed";
+		regulator-name = "ultra_avdd_2p8";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		regulator-enable-ramp-delay = <100>;
+		enable-active-high;
+		gpio = <&pm6150l_gpios 8 0>;
+		vin-supply = <&vreg_bob>;
+	};
+
+	ultra_dvdd_1p2: regulator-ultra-dvdd-1p2 {
+		compatible = "regulator-fixed";
+		regulator-name = "ultra_dvdd_1p2";
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+		regulator-enable-ramp-delay = <100>;
+		enable-active-high;
+		gpio = <&tlmm 72 0>;
+		vin-supply = <&vreg_s5a_2p0>;
+	};
+
+	wide_afvdd_2p8: regulator-wide-afvdd-2p8 {
+		compatible = "regulator-fixed";
+		regulator-name = "wide_afvdd_2p8";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		regulator-enable-ramp-delay = <100>;
+		enable-active-high;
+		gpio = <&pm6150l_gpios 6 0>;
+		vin-supply = <&vreg_bob>;
+	};
+
+	wide_avdd1_2p8: regulator-wide-avdd1-2p8 {
+		compatible = "regulator-fixed";
+		regulator-name = "wide_avdd1_2p8";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		regulator-enable-ramp-delay = <100>;
+		enable-active-high;
+		gpio = <&pm6150l_gpios 9 0>;
+		vin-supply = <&vreg_bob>;
+	};
+
+	wide_dvdd_1p2: regulator-wide-dvdd1-1p2 {
+		compatible = "regulator-fixed";
+		regulator-name = "wide_dvdd_1p2";
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+		regulator-enable-ramp-delay = <100>;
+		enable-active-high;
+		gpio = <&tlmm 42 0>;
+		vin-supply = <&vreg_s5a_2p0>;
+	};
+};
+
+&tlmm {
+	cam_s5kgm2_default: cam-s5kgm2-default-state {
+		rst-pins {
+			pins = "gpio25";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		mclk1-pins {
+			pins = "gpio14";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam_s5k5e9_default: cam-s5k5e9-default-state {
+		rst-pins {
+			pins = "gpio24";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		mclk2-pins {
+			pins = "gpio15";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam_ov8856_default: cam-ov8856-default-state {
+		rst-pins {
+			pins = "gpio30";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		mclk4-pins {
+			pins = "gpio23";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	cam_ov16a1q_default: cam-ov16a1q-default-state {
+		rst-pins {
+			pins = "gpio32";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		mclk0-pins {
+			pins = "gpio13";
+			function = "cam_mclk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+};

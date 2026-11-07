@@ -230,7 +230,6 @@ CONFIG_OVERLAY_FS=m
 CONFIG_SYSFB_SIMPLEFB=y
 # Hold the firmware/simplefb logo until the real driver, so fbcon does not
 # clear to black at init (needs quiet).
-CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER=y
 CONFIG_RD_ZSTD=y
 
 CONFIG_UNICODE=y
@@ -262,6 +261,32 @@ CONFIG_SECURITY_NETWORK=y                   # hard dep of SECURITY_SELINUX
 CONFIG_SECURITY_SELINUX=y
 CONFIG_BPF_SYSCALL=y
 CONFIG_CGROUP_BPF=y
+
+# ============== SM7125 / SC7180 (miatoll family) ==============
+# SM7125 reuses the SC7180 platform drivers. arm64 defconfig leaves the
+# display/GPU clock controllers, TZ memory sharing and the QUSB2 PHY off.
+# Boot-critical: GCC + pinctrl + RPMh/SPMI regulators + UFS + GENI console.
+# The Huaxing FT8756 panel and Focaltech FT8756 touchscreen drivers are not
+# upstream in 7.2.6; they arrive via patches 1304/1305, hence the symbols here.
+CONFIG_SC_GCC_7180=y
+CONFIG_SC_DISPCC_7180=y
+CONFIG_SC_GPUCC_7180=y
+CONFIG_SC_VIDEOCC_7180=y
+CONFIG_SC_CAMCC_7180=y
+CONFIG_PINCTRL_SC7180=y
+CONFIG_INTERCONNECT_QCOM_SC7180=y
+CONFIG_QCOM_GDSC=y
+CONFIG_QCOM_TZMEM=y
+CONFIG_QCOM_TZMEM_MODE_SHMBRIDGE=y
+CONFIG_QCOM_SMEM_STATE=y
+CONFIG_USB_DWC3_QCOM=y
+CONFIG_USB_DWC3_DUAL_ROLE=y
+CONFIG_PHY_QCOM_QUSB2=y
+
+# ============== SM7125 / SC7180 miatoll, display + touch ==============
+# Backported drivers (patches 1304/1305), not present upstream in 7.2.6.
+CONFIG_DRM_PANEL_HUAXING_FT8756=y
+CONFIG_TOUCHSCREEN_FT8756=y
 
 # ============== SM7750 / CQ7790S (Retroid Pocket Duo) ==============
 CONFIG_ATH12K_AHB=y                         # WCN7750 WPSS / hybrid-bus Wi-Fi
@@ -399,3 +424,117 @@ CONFIG_CRYPTO_MD5=y
 CONFIG_CRYPTO_SHA1=y
 CONFIG_CRYPTO_SHA256=y
 CONFIG_CRYPTO_SHA512=y
+
+# ==============================================================================
+# Strip non-QCOM vendor platforms & GPUs to fit memory budget on SM7125 U-Boot
+# ==============================================================================
+# CONFIG_ARCH_ACTIONS is not set
+# CONFIG_ARCH_AIROHA is not set
+# CONFIG_ARCH_SUNXI is not set
+# CONFIG_ARCH_ALPINE is not set
+# CONFIG_ARCH_APPLE is not set
+# CONFIG_ARCH_ARTPEC is not set
+# CONFIG_ARCH_ASPEED is not set
+# CONFIG_ARCH_AXIADO is not set
+# CONFIG_ARCH_BCM is not set
+# CONFIG_ARCH_BCM2835 is not set
+# CONFIG_ARCH_BCM_IPROC is not set
+# CONFIG_ARCH_BCMBCA is not set
+# CONFIG_ARCH_BRCMSTB is not set
+# CONFIG_ARCH_BERLIN is not set
+# CONFIG_ARCH_BLAIZE is not set
+# CONFIG_ARCH_BST is not set
+# CONFIG_ARCH_CIX is not set
+# CONFIG_ARCH_EXYNOS is not set
+# CONFIG_ARCH_K3 is not set
+# CONFIG_ARCH_LG1K is not set
+# CONFIG_ARCH_HISI is not set
+# CONFIG_ARCH_KEEMBAY is not set
+# CONFIG_ARCH_MEDIATEK is not set
+# CONFIG_ARCH_MESON is not set
+# CONFIG_ARCH_MICROCHIP is not set
+# CONFIG_ARCH_SPARX5 is not set
+# CONFIG_ARCH_MVEBU is not set
+# CONFIG_ARCH_NXP is not set
+# CONFIG_ARCH_LAYERSCAPE is not set
+# CONFIG_ARCH_MXC is not set
+# CONFIG_ARCH_S32 is not set
+# CONFIG_ARCH_MA35 is not set
+# CONFIG_ARCH_NPCM is not set
+# CONFIG_ARCH_REALTEK is not set
+# CONFIG_ARCH_RENESAS is not set
+# CONFIG_ARCH_ROCKCHIP is not set
+# CONFIG_ARCH_SEATTLE is not set
+# CONFIG_ARCH_INTEL_SOCFPGA is not set
+# CONFIG_ARCH_SOPHGO is not set
+# CONFIG_ARCH_STM32 is not set
+# CONFIG_ARCH_SYNQUACER is not set
+# CONFIG_ARCH_TEGRA is not set
+# CONFIG_ARCH_TESLA_FSD is not set
+# CONFIG_ARCH_SPRD is not set
+# CONFIG_ARCH_THUNDER is not set
+# CONFIG_ARCH_THUNDER2 is not set
+# CONFIG_ARCH_UNIPHIER is not set
+# CONFIG_ARCH_VEXPRESS is not set
+# CONFIG_ARCH_VISCONTI is not set
+# CONFIG_ARCH_XGENE is not set
+# CONFIG_ARCH_ZYNQMP is not set
+
+# Non-Qualcomm GPUs
+# CONFIG_DRM_NOUVEAU is not set
+# CONFIG_DRM_TEGRA is not set
+# CONFIG_DRM_EXYNOS is not set
+# CONFIG_DRM_ROCKCHIP is not set
+# CONFIG_DRM_MEDIATEK is not set
+# CONFIG_DRM_SUN4I is not set
+# CONFIG_DRM_MESON is not set
+# CONFIG_DRM_VC4 is not set
+# CONFIG_DRM_ETNAVIV is not set
+# CONFIG_DRM_PANFROST is not set
+# CONFIG_DRM_LIMA is not set
+# CONFIG_DRM_V3D is not set
+# CONFIG_DRM_AMDGPU is not set
+# CONFIG_DRM_RADEON is not set
+
+# Verbose logging & early consoles for debug
+CONFIG_PRINTK=y
+CONFIG_PRINTK_TIME=y
+CONFIG_PRINTK_CALLER=y
+CONFIG_CONSOLE_LOGLEVEL_DEFAULT=8
+CONFIG_MESSAGE_LOGLEVEL_DEFAULT=7
+CONFIG_DYNAMIC_DEBUG=y
+CONFIG_DYNAMIC_DEBUG_CORE=y
+CONFIG_EFI_EARLYCON=y
+CONFIG_SERIAL_EARLYCON=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+# CONFIG_FRAMEBUFFER_CONSOLE_DEFERRED_TAKEOVER is not set
+CONFIG_EFI_ZBOOT=y
+
+# Crash log capture across warm reboot: ramoops lives at 0x9d800000 (see
+# sm7125-xiaomi-common.dtsi) with a layout the recovery kernel can read back
+# from /sys/fs/pstore. PSTORE_CONSOLE keeps logging even with no console.
+CONFIG_PSTORE=y
+CONFIG_PSTORE_RAM=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_PSTORE_DEFAULT_KMSG_BYTES=1048576
+# CONFIG_PSTORE_COMPRESS is not set
+
+# USB controller and PHY drivers built-in for early initramfs/ADB access
+CONFIG_PHY_QCOM_USB_HS=y
+CONFIG_PHY_QCOM_USB_SS=y
+CONFIG_PHY_QCOM_USB_SNPS_FEMTO_V2=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_SERIAL=y
+CONFIG_USB_CONFIGFS_ACM=y
+CONFIG_USB_CONFIGFS_NCM=y
+CONFIG_USB_CONFIGFS_ECM=y
+CONFIG_USB_CONFIGFS_RNDIS=y
+CONFIG_USB_CONFIGFS_MASS_STORAGE=y
+CONFIG_USB_CONFIGFS_F_FS=y
+CONFIG_USB_F_ACM=y
+CONFIG_USB_F_SERIAL=y
+CONFIG_USB_F_NCM=y
+CONFIG_USB_F_ECM=y
+CONFIG_USB_F_RNDIS=y
+CONFIG_USB_F_MASS_STORAGE=y
+CONFIG_USB_F_FS=y

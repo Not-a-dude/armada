@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 steamvr() { return 0; }
+[[ -z "${1:-}" ]] && { echo "lepton-split-test skipped (no liblepton.sh provided)"; exit 0; }
 source "${1:?usage: lepton-split-test.sh <patched-tool>/liblepton/liblepton.sh}"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

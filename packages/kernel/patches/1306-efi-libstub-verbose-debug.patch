@@ -1,0 +1,114 @@
+From: Armada <armada@armada.dev>
+Subject: [PATCH] efi/libstub: force maximum verbose logging on ARM64
+
+Force efi_loglevel to debug and add granular diagnostics across all boot
+phases: image addresses, relocation, GOP primary display, initrd, FDT
+preparation, and exit boot services.
+
+diff --git a/drivers/firmware/efi/libstub/printk.c b/drivers/firmware/efi/libstub/printk.c
+--- a/drivers/firmware/efi/libstub/printk.c
++++ b/drivers/firmware/efi/libstub/printk.c
+@@ -11,7 +11,7 @@
+ 
+ #include "efistub.h"
+ 
+-int efi_loglevel = LOGLEVEL_NOTICE;
++int efi_loglevel = LOGLEVEL_DEBUG + 1;
+ 
+ /**
+  * efi_char16_puts() - Write a UCS-2 encoded string to the console
+@@ -132,8 +132,8 @@ int efi_printk(const char *fmt, ...)
+ 		break;
+ 	}
+ 
+-	if (loglevel >= efi_loglevel)
+-		return 0;
++	/* Print unconditionally when debugging */
++	(void)loglevel;
+ 
+ 	if (loglevel >= 0)
+ 		efi_puts("EFI stub: ");
+diff --git a/drivers/firmware/efi/libstub/efi-stub-entry.c b/drivers/firmware/efi/libstub/efi-stub-entry.c
+--- a/drivers/firmware/efi/libstub/efi-stub-entry.c
++++ b/drivers/firmware/efi/libstub/efi-stub-entry.c
+@@ -64,10 +64,12 @@ efi_status_t __efiapi efi_pe_entry(efi_handle_t handle,
+ 	}
+ 
+ 	status = efi_handle_cmdline(image, &cmdline_ptr);
+-	if (status != EFI_SUCCESS)
++	if (status != EFI_SUCCESS) {
++		efi_err("Failed to process command line: 0x%lx\n", status);
+ 		return status;
++	}
+ 
+-	efi_info("Booting Linux Kernel...\n");
++	efi_info("Booting Linux Kernel... base=0x%lx size=0x%lx\n", (unsigned long)image->image_base, image->image_size);
+ 
+ 	status = handle_kernel_image(&image_addr, &image_size,
+ 				     &reserve_addr,
+@@ -79,6 +81,9 @@ efi_status_t __efiapi efi_pe_entry(efi_handle_t handle,
+ 
+ 	kernel_image_offset = image_addr - (unsigned long)image->image_base;
+ 
++	efi_info("Kernel relocated to 0x%lx (reserve_addr=0x%lx, reserve_size=0x%lx, offset=0x%lx)\n",
++		 image_addr, reserve_addr, reserve_size, kernel_image_offset);
++
+ 	status = efi_stub_common(handle, image, image_addr, cmdline_ptr);
+ 
+ 	efi_free(image_size, image_addr);
+diff --git a/drivers/firmware/efi/libstub/efi-stub.c b/drivers/firmware/efi/libstub/efi-stub.c
+--- a/drivers/firmware/efi/libstub/efi-stub.c
++++ b/drivers/firmware/efi/libstub/efi-stub.c
+@@ -158,15 +158,26 @@ efi_status_t efi_stub_common(efi_handle_t handle,
+ 	struct sysfb_display_info *dpy;
+ 	efi_status_t status;
+ 
++	efi_info("efi_stub_common: checking platform features...\n");
+ 	status = check_platform_features();
+ 	if (status != EFI_SUCCESS)
+ 		return status;
+ 
++	efi_info("efi_stub_common: setting up primary display...\n");
+ 	dpy = setup_primary_display();
++	if (dpy) {
++		efi_info("Primary display: %ux%u fb=0x%llx stride=%u\n",
++			 dpy->screen.lfb_width, dpy->screen.lfb_height,
++			 (u64)dpy->screen.lfb_base | ((u64)dpy->screen.ext_lfb_base << 32),
++			 dpy->screen.lfb_linelength);
++	} else {
++		efi_info("Primary display: not available\n");
++	}
+ 
+ 	efi_retrieve_eventlog();
+ 
+ 	/* Ask the firmware to clear memory on unclean shutdown */
++	efi_info("efi_stub_common: loading initrd...\n");
+ 	efi_enable_reset_attack_mitigation();
+ 
+ 	efi_load_initrd(image, ULONG_MAX, efi_get_max_initrd_addr(image_addr),
+@@ -179,8 +190,10 @@ efi_status_t efi_stub_common(efi_handle_t handle,
+ 
+ 	install_memreserve_table();
+ 
++	efi_info("efi_stub_common: booting kernel (cmdline='%s')...\n", cmdline_ptr ? cmdline_ptr : "");
+ 	status = efi_boot_kernel(handle, image, image_addr, cmdline_ptr);
+ 
++	efi_info("efi_stub_common: efi_boot_kernel returned 0x%lx\n", status);
+ 	free_primary_display(dpy);
+ 
+ 	return status;
+diff --git a/drivers/firmware/efi/libstub/fdt.c b/drivers/firmware/efi/libstub/fdt.c
+--- a/drivers/firmware/efi/libstub/fdt.c
++++ b/drivers/firmware/efi/libstub/fdt.c
+@@ -271,6 +271,11 @@ allocate_new_fdt_and_exit_boot(void *handle,
+ 	if (!fdt_addr)
+ 		efi_info("Generating empty DTB\n");
+ 
++	if (fdt_addr)
++		efi_info("DTB: addr=0x%lx size=0x%lx magic=0x%x totalsize=0x%x\n",
++			 fdt_addr, fdt_size, fdt_magic((void *)fdt_addr),
++			 fdt_totalsize((void *)fdt_addr));
++
+ 	efi_info("Exiting boot services...\n");
+ 
+ 	status = efi_allocate_pages(MAX_FDT_SIZE, new_fdt_addr, ULONG_MAX);

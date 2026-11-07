@@ -1246,3 +1246,19 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Add configurable ADC references and share reset and supply sequencing between probe and resume; existing board defaults are retained.
+
+- `patches/1304-drm-panel-huaxing-ft8756.patch`
+  source: local import from the SM7125 6.14.7 tree (`drivers/gpu/drm/panel/panel-huaxing-ft8756.c`)
+  upstream: unknown
+  notes: Adds the Huaxing FT8756 1080x2400 DSI panel driver used by the Redmi Note 9 Pro/S Huaxing variant. Ported to the 7.2.6 DRM panel API (`devm_drm_panel_alloc()`, `mipi_dsi_dcs_*_multi()` and `mipi_dsi_msleep()`).
+
+- `patches/1305-input-touchscreen-ft8756.patch`
+  source: local import from the SM7125 6.14.7 tree (`drivers/input/touchscreen/ft8756.c`)
+  upstream: unknown
+  notes: Adds the Focaltech FT8756 SPI touchscreen driver (`focaltech,ft8756-spi`), loading `focaltech_ts_fw_huaxing.bin` from userspace firmware. Compiles unchanged on 7.2.6.
+
+- `patches/1306-efi-libstub-verbose-debug.patch`
+  source: armada
+  upstream: local
+  notes: Force efi_loglevel to debug and add granular diagnostics across ARM64 EFI stub boot phases (image addresses, relocation, GOP primary display, initrd, FDT preparation, and ExitBootServices).
+

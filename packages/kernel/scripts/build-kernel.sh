@@ -1,7 +1,8 @@
 #!/bin/bash
 # Build aarch64 kernel from kernel.org tarball + patches/ + config overrides into
 # the tarball layout armada's 20-install-kernel.sh consumes. FAST=1 reuses the
-# work dir. Native on aarch64; cross-compiles via aarch64-linux-gnu-gcc on x86_64.
+# work dir. Always built with the LLVM toolchain (clang + lld) and ccache when
+# available; no GCC cross toolchain is required.
 
 set -euo pipefail
 
@@ -19,18 +20,21 @@ KCONFIG_OVERRIDES="${REPO_ROOT}/config/armada-kernel.config.overrides"
 # ---------- Host arch / cross-compile setup ----------
 HOST_ARCH=$(uname -m)
 JOBS=$(nproc)
-MAKE_ARGS=(-j"${JOBS}")
-if [[ "${HOST_ARCH}" == "aarch64" ]]; then
-    echo "==> Native aarch64 build (${JOBS} jobs)"
-else
-    if ! command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
-        echo "ERROR: aarch64-linux-gnu-gcc not found. Install the cross toolchain:" >&2
-        echo "  sudo pacman -S aarch64-linux-gnu-gcc aarch64-linux-gnu-binutils  # CachyOS/Arch" >&2
-        echo "  sudo apt install gcc-aarch64-linux-gnu                            # Debian/Ubuntu" >&2
+MAKE_ARGS=(-j"${JOBS}" LLVM=1 ARCH=arm64)
+
+# LLVM/Clang toolchain: clang + lld + llvm-{ar,nm,objcopy,objdump,readelf,strip}.
+for tool in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip; do
+    if ! command -v "${tool}" >/dev/null 2>&1; then
+        echo "ERROR: ${tool} not found. Install LLVM/LLD (e.g. 'sudo pacman -S clang lld llvm')." >&2
         exit 1
     fi
-    MAKE_ARGS+=(ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-)
-    echo "==> Cross-compiling from ${HOST_ARCH} to aarch64 (${JOBS} jobs)"
+done
+
+if [[ "${HOST_ARCH}" == "aarch64" ]]; then
+    echo "==> Native aarch64 build with clang/LLD (${JOBS} jobs)"
+else
+    MAKE_ARGS+=(CROSS_COMPILE=aarch64-linux-gnu-)
+    echo "==> Cross-compiling from ${HOST_ARCH} to aarch64 with clang/LLD (${JOBS} jobs)"
 fi
 
 mkdir -p "${WORK_DIR}" "${OUT_DIR}"
@@ -38,13 +42,9 @@ export KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-armada}"
 export KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST:-builder}"
 
 if command -v ccache >/dev/null 2>&1; then
-    ccache -M 2G >/dev/null 2>&1 || true
-    ccache -z >/dev/null 2>&1 || true
-    if [[ "${HOST_ARCH}" == "aarch64" ]]; then
-        MAKE_ARGS+=(CC="ccache gcc")
-    else
-        MAKE_ARGS+=(CC="ccache aarch64-linux-gnu-gcc")
-    fi
+    # Never shrink an existing cache; only raise/keep the configured limit.
+    ccache --max-size="${CCACHE_MAXSIZE:-60G}" >/dev/null 2>&1 || true
+    MAKE_ARGS+=(CC="ccache clang" HOSTCC="ccache clang")
 fi
 
 # ---------- 1. Fetch upstream source ----------
@@ -194,7 +194,11 @@ if [ -f "${KCONFIG_OVERRIDES}" ]; then
     echo "==> Merging config fragment $(basename "${KCONFIG_OVERRIDES}")"
     # merge_config.sh's internal `make` reads ARCH/CROSS_COMPILE from the env
     export ARCH="${ARCH:-arm64}"
+    export LLVM=1
     [ "${HOST_ARCH}" = "aarch64" ] || export CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
+    if command -v ccache >/dev/null 2>&1; then
+        export CC="ccache clang" HOSTCC="ccache clang"
+    fi
     frag=$(mktemp); merge_log=$(mktemp)
     # kconfig's conf can't parse trailing inline comments; strip them off assignments
     sed -E '/^[[:space:]]*CONFIG_[A-Z0-9_]+=/ s/[[:space:]]*#.*$//' "${KCONFIG_OVERRIDES}" > "${frag}"
@@ -225,8 +229,12 @@ echo "==> Kernel version: ${KVER}"
 echo "==> Compiler: $(sed -n 's/^CONFIG_CC_VERSION_TEXT="\(.*\)"$/\1/p' .config)"
 
 # ---------- 5. Build ----------
-echo "==> Building Image + dtbs + modules"
-make "${MAKE_ARGS[@]}" Image dtbs modules
+BUILD_TARGETS=(Image dtbs modules)
+if grep -q '^CONFIG_EFI_ZBOOT=y' .config 2>/dev/null; then
+    BUILD_TARGETS+=(vmlinuz.efi)
+fi
+echo "==> Building ${BUILD_TARGETS[*]}"
+make "${MAKE_ARGS[@]}" "${BUILD_TARGETS[@]}"
 command -v ccache >/dev/null 2>&1 && ccache -s || true
 size vmlinux 2>/dev/null || true
 
@@ -237,6 +245,9 @@ mkdir -p "${STAGE}/lib/modules/${KVER}/dtb/qcom"
 
 echo "==> Staging vmlinuz + modules + DTBs"
 cp arch/arm64/boot/Image "${STAGE}/lib/modules/${KVER}/vmlinuz"
+if [ -f arch/arm64/boot/vmlinuz.efi ]; then
+    cp arch/arm64/boot/vmlinuz.efi "${STAGE}/lib/modules/${KVER}/vmlinuz.efi"
+fi
 make "${MAKE_ARGS[@]}" INSTALL_MOD_PATH="${STAGE}" INSTALL_MOD_STRIP=1 modules_install >/dev/null
 rm -f "${STAGE}/lib/modules/${KVER}/build" "${STAGE}/lib/modules/${KVER}/source"
 

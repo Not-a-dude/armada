@@ -340,3 +340,6 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1182-arm64-dts-qcom-eliza-add-cpu-l3-scaling.patch
 1302-input-rsinput-support-retroid-pocket-duo.patch
 1303-serial-qcom-geni-allow-shorter-rx-dma-transfer.patch
+1304-drm-panel-huaxing-ft8756.patch
+1305-input-touchscreen-ft8756.patch
+1306-efi-libstub-verbose-debug.patch

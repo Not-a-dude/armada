@@ -87,7 +87,9 @@ package name:
     source packages/mesa-x86/BASE.env
     [ -d "packages/{{ name }}" ] || { echo "unknown package: {{ name }}" >&2; exit 1; }
     hash="$(packages/package-hash.sh {{ name }})"
+    platform="linux/arm64"
     buildah build \
+        --platform "${platform}" \
         -f packages/Containerfile \
         --target "out-{{ name }}" \
         --layers \
