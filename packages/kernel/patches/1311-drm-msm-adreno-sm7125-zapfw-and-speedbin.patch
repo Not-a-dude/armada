@@ -1,0 +1,41 @@
+From: Armada <armada@armada.dev>
+Subject: [PATCH] drm/msm/adreno: add zapfw and speedbin for SM7125 Adreno 618
+
+Specify zapfw = "a615_zap.mbn" and speedbin {159, 3} for Adreno 618
+on SM7125.
+
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+--- a/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_catalog.c
+@@ -798,6 +798,7 @@
+ 		.quirks = ADRENO_QUIRK_HAS_CACHED_COHERENT |
+ 			  ADRENO_QUIRK_4GB_VA,
+ 		.funcs = &a6xx_gpu_funcs,
++		.zapfw = "a615_zap.mbn",
+ 		.a6xx = &(const struct a6xx_info) {
+ 			.protect = &a630_protect,
+ 			.gmu_cgc_mode = 0x00000222,
+@@ -807,6 +808,7 @@
+ 			{ 0,   0 },
+ 			{ 169, 1 },
+ 			{ 174, 2 },
++			{ 159, 3 },
+ 		),
+ 	}, {
+ 		.machine = "qcom,sm4350",
+@@ -921,6 +923,7 @@
+ 		.quirks = ADRENO_QUIRK_HAS_CACHED_COHERENT |
+ 			ADRENO_QUIRK_HAS_HW_APRIV,
+ 		.funcs = &a6xx_gpu_funcs,
++		.zapfw = "a615_zap.mbn",
+ 		.a6xx = &(const struct a6xx_info) {
+ 			.hwcg = a690_hwcg,
+ 			.protect = &a650_protect,
+@@ -1050,6 +1053,7 @@
+ 		.quirks = ADRENO_QUIRK_HAS_CACHED_COHERENT |
+ 			ADRENO_QUIRK_HAS_HW_APRIV,
+ 		.funcs = &a6xx_gpu_funcs,
++		.zapfw = "a615_zap.mbn",
+ 		.a6xx = &(const struct a6xx_info) {
+ 			.hwcg = a690_hwcg,
+ 			.protect = &a660_protect,

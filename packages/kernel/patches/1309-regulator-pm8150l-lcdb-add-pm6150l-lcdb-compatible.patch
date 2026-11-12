@@ -1,0 +1,17 @@
+From: Armada <armada@armada.dev>
+Subject: [PATCH] regulator: qcom-pm8150l-lcdb: add pm6150l-lcdb compatible
+
+The PM6150L PMIC has the same LCDB display bias regulator peripheral
+as PM8150L. Add qcom,pm6150l-lcdb to of_device_id match table.
+
+diff --git a/drivers/regulator/qcom-pm8150l-lcdb-regulator.c b/drivers/regulator/qcom-pm8150l-lcdb-regulator.c
+--- a/drivers/regulator/qcom-pm8150l-lcdb-regulator.c
++++ b/drivers/regulator/qcom-pm8150l-lcdb-regulator.c
+@@ -196,6 +196,7 @@ static int qcom_pm8150l_lcdb_probe(struct platform_device *pdev)
+ 
+ static const struct of_device_id lcdb_match[] = {
+ 	{ .compatible = "qcom,pm8150l-lcdb" },
++	{ .compatible = "qcom,pm6150l-lcdb" },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, lcdb_match);

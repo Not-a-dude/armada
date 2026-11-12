@@ -286,6 +286,7 @@ CONFIG_PHY_QCOM_QUSB2=y
 # ============== SM7125 / SC7180 miatoll, display + touch ==============
 # Backported drivers (patches 1304/1305), not present upstream in 7.2.6.
 CONFIG_DRM_PANEL_HUAXING_FT8756=y
+CONFIG_DRM_PANEL_TIANMA_NT36675=y
 CONFIG_TOUCHSCREEN_FT8756=y
 
 # ============== SM7750 / CQ7790S (Retroid Pocket Duo) ==============

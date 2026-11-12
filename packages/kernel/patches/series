@@ -344,3 +344,12 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1305-input-touchscreen-ft8756.patch
 1306-efi-libstub-verbose-debug.patch
 1307-firmware-qcom-tzmem-disable-SHM-bridge-for-SM7125.patch
+
+1308-clk-qcom-dispcc-sc7180-enable-parent-for-pclk0.patch
+1309-regulator-pm8150l-lcdb-add-pm6150l-lcdb-compatible.patch
+1310-arm64-dts-qcom-pm6150l-sc7180-lcdb-and-gpu-opp.patch
+1311-drm-msm-adreno-sm7125-zapfw-and-speedbin.patch
+1312-drm-msm-dpu-disable-virtual-planes-by-default.patch
+1313-drm-panel-tianma-nt36675.patch
+1314-arm64-early-fb-visual-debug.patch
+1315-drm-msm-dsi-disable-controller-before-init.patch
