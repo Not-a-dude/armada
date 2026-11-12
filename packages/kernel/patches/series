@@ -354,3 +354,4 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1314-arm64-early-fb-visual-debug.patch
 1315-drm-msm-dsi-disable-controller-before-init.patch
 1316-soc-qcom-pd-mapper-add-sm7125.patch
+1317-drm-msm-dsi-cycle-link-on-first-bringup.patch

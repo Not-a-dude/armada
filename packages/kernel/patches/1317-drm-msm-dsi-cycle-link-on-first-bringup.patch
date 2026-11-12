@@ -1,0 +1,101 @@
+Subject: [PATCH] drm/msm/dsi: force one DPMS off->on cycle after first bring-up (sm7125)
+
+On sm7125 (joyeuse) the first DSI link bring-up after a cold boot leaves
+the panel powered off: the init DCS commands take tens of milliseconds and
+GET_POWER_MODE reads 0, so the screen stays black until the user manually
+cycles DPMS. A real DPMS off->on fixes it because PHY, controller and panel
+all go through a full disable/enable on a settled system.
+
+The failing init happens in kernel fbdev before any compositor starts, so
+do the workaround in the kernel: after the first bridge pre_enable, schedule
+a one-shot work that performs a full DRM suspend/resume (the same thing a
+DPMS off->on does). This is compositor-independent.
+
+This is an ugly workaround; remove it once the real cause is found.
+
+--- a/drivers/gpu/drm/msm/dsi/dsi_manager.c	2026-11-12 21:34:37.705960872 +0700
++++ b/drivers/gpu/drm/msm/dsi/dsi_manager.c	2026-11-12 21:34:37.890405108 +0700
+@@ -3,6 +3,8 @@
+  * Copyright (c) 2015, The Linux Foundation. All rights reserved.
+  */
+ 
++#include <drm/drm_modeset_helper.h>
++
+ #include "drm/drm_bridge_connector.h"
+ 
+ #include "msm_kms.h"
+@@ -30,6 +32,55 @@
+ 
+ static struct msm_dsi_manager msm_dsim_glb;
+ 
++/*
++ * FIXME(sm7125): работаем через жопу, зато без userspace.
++ *
++ * На холодной загрузке первый подъём DSI-линка (его делает ещё kernel fbdev
++ * до старта композитора) оставляет PHY/контроллер в кривом состоянии: DCS-
++ * команды инициализации панели идут десятки миллисекунд, панель в итоге
++ * остаётся выключенной (GET_POWER_MODE -> 0, экран чёрный). Реальный
++ * DPMS off->on это лечит, потому что PHY, контроллер и панель проходят полный
++ * disable/enable уже на "успокоившейся" системе.
++ *
++ * Поэтому после первого enable мы один раз откладываем работу, которая
++ * делает полный DRM suspend/resume (то же самое, что DPMS off->on), но не
++ * через композитор, а из ядра. Работает с любым композитором (gamescope,
++ * KWin, fbcon).
++ *
++ * Когда настоящая причина будет найдена - выпилить этот костыль.
++ */
++static bool dsi_mgr_first_bringup_cycled;
++
++static struct drm_device *dsi_mgr_cycle_ddev;
++
++static void dsi_mgr_first_bringup_cycle_work(struct work_struct *work)
++{
++	struct drm_device *ddev = READ_ONCE(dsi_mgr_cycle_ddev);
++	int ret;
++
++	if (!ddev)
++		return;
++
++	pr_info("DISPDBG sm7125: forcing one DPMS off->on cycle\n");
++
++	ret = drm_mode_config_helper_suspend(ddev);
++	if (ret) {
++		pr_err("DISPDBG sm7125: suspend failed: %d\n", ret);
++		return;
++	}
++
++	msleep(300);
++
++	ret = drm_mode_config_helper_resume(ddev);
++	if (ret)
++		pr_err("DISPDBG sm7125: resume failed: %d\n", ret);
++	else
++		pr_info("DISPDBG sm7125: DPMS cycle done\n");
++}
++
++static DECLARE_DELAYED_WORK(dsi_mgr_first_bringup_cycle,
++			    dsi_mgr_first_bringup_cycle_work);
++
+ #define IS_BONDED_DSI()		(msm_dsim_glb.is_bonded_dsi)
+ #define IS_SYNC_NEEDED()	(msm_dsim_glb.is_sync_needed)
+ #define IS_MASTER_DSI_LINK(id)	(msm_dsim_glb.master_dsi_link_id == id)
+@@ -296,6 +347,18 @@
+ 		return;
+ 	}
+ 
++	/*
++	 * FIXME(sm7125): см. dsi_mgr_first_bringup_cycled. Один раз, когда
++	 * система уже поднялась, сами делаем полный DPMS-цикл, иначе панель
++	 * так и остаётся выключенной после холодной загрузки.
++	 */
++	if (!READ_ONCE(dsi_mgr_first_bringup_cycled)) {
++		WRITE_ONCE(dsi_mgr_first_bringup_cycled, true);
++		dsi_mgr_cycle_ddev = msm_dsi->dev;
++		schedule_delayed_work(&dsi_mgr_first_bringup_cycle,
++				      msecs_to_jiffies(12000));
++	}
++
+ 	ret = msm_dsi_host_enable(host);
+ 	if (ret) {
+ 		pr_err("%s: enable host %d failed, %d\n", __func__, id, ret);
