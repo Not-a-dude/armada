@@ -31,16 +31,6 @@
 		ranges;
 
 		stdout-path = "serial0:115200n8";
-
-		framebuffer0: framebuffer@9c000000 {
-			compatible = "simple-framebuffer";
-			reg = <0x0 0x9c000000 0x0 (1080 * 2400 * 4)>;
-			width = <1080>;
-			height = <2400>;
-			stride = <(1080 * 4)>;
-			format = "a8r8g8b8";
-			memory-region = <&cont_splash_mem>;
-		};
 	};
 
 	aliases {
@@ -438,6 +428,10 @@
 	};
 };
 
+&pm6150l_lcdb {
+	status = "okay";
+};
+
 &pm6150l_wled {
 	qcom,cabc;
 	qcom,cabc-sel = <1>;
@@ -458,7 +452,7 @@
 &pm6150_typec {
 	vdd-vbus-supply = <&pm6150_vbus>;
 	vdd-pdphy-supply = <&vreg_l17a_3p1>;
-	status = "disabled";
+	status = "okay";
 
 	connector {
 		compatible = "usb-c-connector";
@@ -498,7 +492,7 @@
 &pm6150_vbus {
 	regulator-min-microamp = <500000>;
 	regulator-max-microamp = <3000000>;
-	status = "disabled";
+	status = "okay";
 };
 
 &pm6150l_flash {
@@ -525,11 +519,11 @@
 };
 
 &qupv3_id_0 {
-	status = "disabled";
+	status = "okay";
 };
 
 &qupv3_id_1 {
-	status = "disabled";
+	status = "okay";
 };
 
 &remoteproc_adsp {
@@ -797,7 +791,7 @@
 };
 
 &spi11 {
-	status = "disabled";
+	status = "okay";
 	clock-frequency = <8000000>;
 
 	touchscreen: touchscreen@0 {
@@ -809,8 +803,8 @@
 		pinctrl-1 = <&ts_int_suspend &ts_reset_suspend>;
 		pinctrl-names = "default", "sleep";
 
-		reset-gpios = <&tlmm 8 GPIO_ACTIVE_HIGH>;
-		interrupts-extended = <&tlmm 9 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpio = <&tlmm 8 GPIO_ACTIVE_HIGH>;
+		irq-gpio = <&tlmm 9 IRQ_TYPE_EDGE_FALLING>;
 
 		vio-supply = <&vreg_l18a_3p0>;
 

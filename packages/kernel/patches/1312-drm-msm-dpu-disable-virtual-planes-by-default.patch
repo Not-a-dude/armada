@@ -1,0 +1,18 @@
+From: Armada <armada@armada.dev>
+Subject: [PATCH] drm/msm/dpu: disable virtual planes by default
+
+Disable dpu_use_virtual_planes by default to prevent display corruption
+and plane assignment failures on DPU platforms without virtual plane support.
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -53,7 +53,7 @@
+ #define DPU_DEBUGFS_DIR "msm_dpu"
+ #define DPU_DEBUGFS_HWMASKNAME "hw_log_mask"
+ 
+-bool dpu_use_virtual_planes = true;
++bool dpu_use_virtual_planes;
+ module_param(dpu_use_virtual_planes, bool, 0);
+ 
+ static int dpu_kms_hw_init(struct msm_kms *kms);

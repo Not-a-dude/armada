@@ -1,0 +1,18 @@
+From: Armada <armada@armada.dev>
+Subject: [PATCH] clk: qcom: dispcc-sc7180: enable parent on disp_cc_mdss_pclk0_clk_src
+
+Add CLK_OPS_PARENT_ENABLE to disp_cc_mdss_pclk0_clk_src flags to ensure
+the DSI PHY PLL parent clock is prepared and enabled during rate operations.
+
+diff --git a/drivers/clk/qcom/dispcc-sc7180.c b/drivers/clk/qcom/dispcc-sc7180.c
+--- a/drivers/clk/qcom/dispcc-sc7180.c
++++ b/drivers/clk/qcom/dispcc-sc7180.c
+@@ -277,7 +277,7 @@ static struct clk_rcg2 disp_cc_mdss_pclk0_clk_src = {
+ 		.name = "disp_cc_mdss_pclk0_clk_src",
+ 		.parent_data = disp_cc_parent_data_5,
+ 		.num_parents = ARRAY_SIZE(disp_cc_parent_data_5),
+-		.flags = CLK_SET_RATE_PARENT,
++		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
+ 		.ops = &clk_pixel_ops,
+ 	},
+ };

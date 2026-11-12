@@ -1,0 +1,205 @@
+From: Armada <armada@armada.dev>
+Subject: [PATCH] arm64: early framebuffer visual debug instrumentation
+
+Draw visual stages and initcall matrix directly to 0x9c000000 framebuffer
+during early boot to diagnose hangs before serial/console is available.
+
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -347,6 +347,17 @@
+ 
+ 	request_standard_resources();
+ 
++	{
++		u32 __iomem *fb = early_memremap(0x9c3b4000, 0x40000);
++		if (fb) {
++			int i;
++			for (i = 0; i < 0x40000 / 4; i++)
++				writel_relaxed(0xFF00FFFF, &fb[i]);
++			early_memunmap(fb, 0x40000);
++		}
++	}
++
++
+ 	early_ioremap_reset();
+ 
+ 	if (acpi_disabled)
+diff --git a/init/main.c b/init/main.c
+--- a/init/main.c
++++ b/init/main.c
+@@ -38,6 +38,20 @@
+ #include <linux/kmsan.h>
+ #include <linux/ksysfs.h>
+ #include <linux/vmalloc.h>
++#include <linux/io.h>
++static u32 __iomem *debug_fb_base;
++static void debug_draw_stage(int line_y, u32 color)
++{
++	if (!debug_fb_base)
++		debug_fb_base = ioremap_wc(0x9c000000, 0x9e3400);
++	if (debug_fb_base) {
++		u32 __iomem *line = debug_fb_base + (line_y * 1080);
++		size_t i;
++		for (i = 0; i < 50 * 1080; i++)
++			writel_relaxed(color, &line[i]);
++	}
++}
++
+ #include <linux/kernel_stat.h>
+ #include <linux/start_kernel.h>
+ #include <linux/security.h>
+@@ -1032,6 +1046,7 @@
+ 	sort_main_extable();
+ 	trap_init();
+ 	mm_core_init();
++	debug_draw_stage(1000, 0xffff0000);
+ 	maple_tree_init();
+ 	poking_init();
+ 	ftrace_init();
+@@ -1045,6 +1060,7 @@
+ 	 * time - but meanwhile we still have a functioning scheduler.
+ 	 */
+ 	sched_init();
++	debug_draw_stage(1100, 0xffffa500);
+ 
+ 	if (WARN(!irqs_disabled(),
+ 		 "Interrupts were enabled *very* early, fixing it\n"))
+@@ -1110,6 +1126,7 @@
+ 	 * this. But we do want output early, in case something goes wrong.
+ 	 */
+ 	console_init();
++	debug_draw_stage(1300, 0xff00ff00);
+ 	if (panic_later)
+ 		panic("Too many boot %s vars at `%s'", panic_later,
+ 		      panic_param);
+@@ -1394,19 +1411,79 @@
+ 	return 0;
+ }
+ 
++static u32 get_driver_color(u32 idx)
++{
++	/* Cycle colors every 20 drivers */
++	u32 group20 = (idx / 20) % 6;
++	u32 is_second_10 = (idx % 20) >= 10;
++
++	switch (group20) {
++	case 0: /* GREEN */
++		return is_second_10 ? 0xff00b300 : 0xff33ff33;
++	case 1: /* CYAN */
++		return is_second_10 ? 0xff009999 : 0xff33ffff;
++	case 2: /* YELLOW */
++		return is_second_10 ? 0xffb3b300 : 0xffffff33;
++	case 3: /* BLUE */
++		return is_second_10 ? 0xff0044cc : 0xff4d88ff;
++	case 4: /* ORANGE */
++		return is_second_10 ? 0xffcc6600 : 0xffff9933;
++	case 5: /* PURPLE / MAGENTA */
++		return is_second_10 ? 0xff8800cc : 0xffcc33ff;
++	default:
++		return 0xffffffff;
++	}
++}
++
++static void debug_draw_driver_box(u32 idx, u32 color)
++{
++	if (!debug_fb_base)
++		return;
++
++	/* Place grid from Y=100 to Y=880: 50 rows of 50 boxes = 2500 box capacity */
++	/* Box size 14x14 with 4px gap = 18x18 step */
++	u32 col = idx % 50;
++	u32 row = idx / 50;
++	u32 start_x = 90 + (col * 18);
++	u32 start_y = 100 + (row * 18);
++
++	if (start_y + 14 >= 900)
++		return;
++
++	size_t dy, dx;
++	for (dy = 0; dy < 14; dy++) {
++		u32 __iomem *line = debug_fb_base + ((start_y + dy) * 1080) + start_x;
++		for (dx = 0; dx < 14; dx++)
++			writel_relaxed(color, &line[dx]);
++	}
++}
++
+ static void __init do_initcall_level(int level, char *command_line)
+ {
+ 	initcall_entry_t *fn;
+ 
+-	parse_args(initcall_level_names[level],
+-		   command_line, __start___param,
+-		   __stop___param - __start___param,
+-		   level, level,
+-		   NULL, ignore_unknown_bootoption);
++	if (debug_fb_base) {
++		u32 __iomem *line = debug_fb_base + ((1420 + level * 10) * 1080);
++		size_t i;
++		u32 colors[] = { 0xffff0000, 0xffff7f00, 0xffffff00, 0xff00ff00, 0xff00ffff, 0xff0000ff, 0xff8b00ff, 0xffffffff };
++		for (i = 0; i < 8 * 1080; i++)
++			writel_relaxed(colors[level & 7], &line[i]);
++	}
+ 
++	strcpy(command_line, saved_command_line);
+ 	do_trace_initcall_level(initcall_level_names[level]);
+-	for (fn = initcall_levels[level]; fn < initcall_levels[level+1]; fn++)
++	for (fn = initcall_levels[level]; fn < initcall_levels[level+1]; fn++) {
++		static u32 driver_counter = 0;
++		/* While running, draw RED / PINK (0xffff0033) */
++		debug_draw_driver_box(driver_counter, 0xffff0033);
++		if (driver_counter == 738) debug_draw_stage(800, 0xffff0000);
++		if (driver_counter == 740) debug_draw_stage(820, 0xff00ffff);
++		if (driver_counter == 741) debug_draw_stage(840, 0xffffff00);
+ 		do_one_initcall(initcall_from_entry(fn));
++		/* When finished, paint with group palette color */
++		debug_draw_driver_box(driver_counter, get_driver_color(driver_counter));
++		driver_counter++;
++	}
+ }
+ 
+ static void __init do_initcalls(void)
+@@ -1442,7 +1519,9 @@
+ 	driver_init();
+ 	init_irq_proc();
+ 	do_ctors();
++	debug_draw_stage(1400, 0xffffff00); /* 1. YELLOW: Start do_initcalls() */
+ 	do_initcalls();
++	debug_draw_stage(1500, 0xff0000ff); /* 2. BLUE: End do_initcalls() */
+ }
+ 
+ static void __init do_pre_smp_initcalls(void)
+@@ -1569,11 +1648,13 @@
+ 	rcu_end_inkernel_boot();
+ 
+ 	do_sysctl_args();
++	debug_draw_stage(1800, 0xffff69b4);
+ 
+ 	if (ramdisk_execute_command) {
+ 		ret = run_init_process(ramdisk_execute_command);
+ 		if (!ret)
+ 			return 0;
++		debug_draw_stage(1900, 0xffff0000); /* 5. RED: run_init_process FAILED */
+ 		pr_err("Failed to execute %s (error %d)\n",
+ 		       ramdisk_execute_command, ret);
+ 	}
+@@ -1617,9 +1698,11 @@
+ 	struct file *file = filp_open("/dev/console", O_RDWR, 0);
+ 
+ 	if (IS_ERR(file)) {
++		debug_draw_stage(1700, 0xffff0000); /* 4. RED: /dev/console FAILED */
+ 		pr_err("Warning: unable to open an initial console.\n");
+ 		return;
+ 	}
++	debug_draw_stage(1700, 0xffffffff); /* 4. WHITE: /dev/console OK */
+ 	init_dup(file);
+ 	init_dup(file);
+ 	init_dup(file);
+@@ -1660,6 +1743,7 @@
+ 	kunit_run_all_tests();
+ 
+ 	wait_for_initramfs();
++	debug_draw_stage(1600, 0xff800080); /* 3. PURPLE: Initramfs unpacked */
+ 	console_on_rootfs();
+ 
+ 	/*
