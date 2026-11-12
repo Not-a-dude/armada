@@ -47,7 +47,7 @@ new file mode 100644
 index 0000000..ac38a98
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-huaxing-ft8756.c
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,239 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Copyright (c) 2025 Vitalii Skorkin <nikroksm@mail.ru>
@@ -83,12 +83,21 @@ index 0000000..ac38a98
 +
 +static void huaxing_ft8756_reset(struct huaxing_ft8756 *ctx)
 +{
++	/*
++	 * On a cold boot the bootloader leaves the panel running and the
++	 * regulator is already on, so the old 1-2 ms reset pulse is too short
++	 * to bring the controller back to a known state: it stays mute to DCS
++	 * until a full unprepare/prepare cycle (which holds reset asserted for
++	 * a long time) has been done. Hold reset asserted long enough to act
++	 * as a real power-on reset and give the controller time to come up
++	 * before the first command.
++	 */
 +	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-+	usleep_range(4000, 5000);
++	usleep_range(5000, 6000);
 +	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-+	usleep_range(1000, 2000);
++	msleep(25);
 +	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-+	usleep_range(10000, 11000);
++	msleep(30);
 +}
 +
 +static int huaxing_ft8756_on(struct huaxing_ft8756 *ctx)
