@@ -415,7 +415,7 @@
 &ipa {
 	firmware-name = "qcom/sm7125/miatoll/ipa_fws.mbn";
 	memory-region = <&ipa_fw_mem>;
-	status = "disabled";
+	status = "okay";
 };
 
 &pm6150l_lpg {
@@ -509,7 +509,7 @@
 };
 
 &wifi {
-	status = "disabled";
+	status = "okay";
 
 	vdd-0.8-cx-mx-supply = <&vreg_l9a_0p664>;
 	vdd-1.8-xo-supply = <&vreg_l1c_1p8>;
@@ -534,7 +534,7 @@
 
 &remoteproc_mpss {
 	firmware-name = "qcom/sm7125/miatoll/modem.mbn";
-	status = "disabled";
+	status = "okay";
 };
 
 &sdhc_2 {
@@ -853,7 +853,7 @@
 	pinctrl-names = "default", "sleep";
 	pinctrl-1 = <&qup_uart3_sleep>;
 
-	status = "disabled";
+	status = "okay";
 
 	bluetooth: bluetooth {
 		compatible = "qcom,wcn3991-bt";
