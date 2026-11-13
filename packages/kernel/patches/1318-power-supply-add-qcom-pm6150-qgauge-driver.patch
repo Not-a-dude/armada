@@ -1,0 +1,727 @@
+Subject: [PATCH] power: supply: add Qualcomm PM6150 QGauge driver
+
+The PM6150 QGauge (PMIC battery fuel gauge) driver was removed from
+upstream along with its PM6150 DT bindings, so sm7125 devices (Xiaomi
+joyeuse/curtana) lost battery reporting entirely.
+
+Bring back the driver (ported from 6.14) with the local capacity model for
+the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
+
+--- a/drivers/power/supply/qcom_qg.c
++++ b/drivers/power/supply/qcom_qg.c
+@@ -0,0 +1,686 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) 2024, Danila Tikhonov <danila@jiaxyga.com>
++ * Enhanced for Xiaomi Joyeuse (PM6150) ATL 5020 mAh battery chemistry,
++ * IR-compensated OCV capacity, hardware VBUS detection, and SDAM sync.
++ */
++
++#include <linux/iio/consumer.h>
++#include <linux/init.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/nvmem-consumer.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/platform_device.h>
++#include <linux/power_supply.h>
++#include <linux/regmap.h>
++#include <linux/notifier.h>
++#include <linux/workqueue.h>
++#include <linux/jiffies.h>
++#include <linux/fs.h>
++
++/* BATT offsets */
++#define QG_S2_NORMAL_AVG_V_DATA0_REG	0x80 /* 2-byte 0x80-0x81 */
++#define QG_S2_NORMAL_AVG_I_DATA0_REG	0x82 /* 2-byte 0x82-0x83 */
++#define QG_LAST_ADC_V_DATA0_REG		0xc0 /* 2-byte 0xc0-0xc1 */
++#define QG_LAST_ADC_I_DATA0_REG		0xc2 /* 2-byte 0xc2-0xc3 */
++
++/* SRAM offsets */
++#define QG_SDAM_VALID_OFFSET		0x46 /* 1-byte 0x46 */
++#define QG_SDAM_SOC_OFFSET		0x47 /* 1-byte 0x47 */
++#define QG_SDAM_OCV_OFFSET		0x4c /* 4-byte 0x4c-0x4f */
++#define QG_SDAM_LEARNED_CAPACITY_OFFSET	0x68 /* 2-byte 0x68-0x69 */
++
++/* PM6150 USBIN registers */
++#define PM6150_USBIN_BASE		0x1300
++#define PM6150_USBIN_INT_RT_STS_REG	(PM6150_USBIN_BASE + 0x10) /* 0x1310 */
++#define PM6150_USBIN_PLUGIN_RT_STS_BIT	BIT(4)
++
++#define TCPM_PREFIX			"tcpm-source-psy-"
++#define QG_REFRESH_MS			1000
++
++/*
++ * ATL 5020 mAh joyeuse OCV-vs-SoC profile, transcribed from the OEM
++ * downstream `qcom,pc-temp-v1-lut` in atl-5020.dtsi. 56 SoC rows x 5
++ * temperature columns (0, 10, 25, 40, 50 degC). OCV in mV.
++ */
++#define ATL5020_SOC_ROWS   56
++#define ATL5020_TEMP_COLS  5
++
++static const u16 atl5020_soc_pct[ATL5020_SOC_ROWS] = {
++	100, 98, 96, 94, 92,
++	 90, 88, 86, 84, 82,
++	 80, 78, 76, 74, 72,
++	 70, 68, 66, 64, 62,
++	 60, 58, 56, 54, 52,
++	 50, 48, 46, 44, 42,
++	 40, 38, 36, 34, 32,
++	 30, 28, 26, 24, 22,
++	 20, 18, 16, 14, 12,
++	 10,  9,  8,  7,  6,
++	  5,  4,  3,  2,  1,
++	  0,
++};
++
++static const s16 atl5020_temp_dc[ATL5020_TEMP_COLS] = { 0, 100, 250, 400, 500 };
++
++static const u16 atl5020_ocv_mv[ATL5020_SOC_ROWS * ATL5020_TEMP_COLS] = {
++	/* 100% */ 4415, 4427, 4434, 4437, 4438,
++	/*  98% */ 4392, 4403, 4410, 4409, 4409,
++	/*  96% */ 4369, 4379, 4387, 4387, 4386,
++	/*  94% */ 4345, 4357, 4365, 4365, 4365,
++	/*  92% */ 4321, 4335, 4342, 4343, 4343,
++	/*  90% */ 4298, 4311, 4320, 4321, 4321,
++	/*  88% */ 4274, 4288, 4296, 4298, 4298,
++	/*  86% */ 4250, 4263, 4272, 4274, 4274,
++	/*  84% */ 4226, 4239, 4248, 4250, 4250,
++	/*  82% */ 4203, 4215, 4223, 4226, 4226,
++	/*  80% */ 4181, 4191, 4199, 4202, 4202,
++	/*  78% */ 4159, 4168, 4175, 4178, 4178,
++	/*  76% */ 4137, 4145, 4152, 4154, 4154,
++	/*  74% */ 4115, 4123, 4130, 4132, 4131,
++	/*  72% */ 4094, 4102, 4108, 4109, 4109,
++	/*  70% */ 4074, 4081, 4086, 4088, 4088,
++	/*  68% */ 4054, 4061, 4066, 4067, 4067,
++	/*  66% */ 4035, 4042, 4046, 4047, 4047,
++	/*  64% */ 4015, 4024, 4027, 4029, 4028,
++	/*  62% */ 3998, 4007, 4011, 4012, 4011,
++	/*  60% */ 3983, 3990, 3993, 3994, 3994,
++	/*  58% */ 3968, 3973, 3971, 3972, 3972,
++	/*  56% */ 3953, 3955, 3945, 3945, 3945,
++	/*  54% */ 3937, 3930, 3924, 3923, 3923,
++	/*  52% */ 3920, 3901, 3907, 3907, 3908,
++	/*  50% */ 3900, 3883, 3893, 3894, 3895,
++	/*  48% */ 3879, 3874, 3881, 3881, 3882,
++	/*  46% */ 3865, 3867, 3872, 3870, 3871,
++	/*  44% */ 3856, 3859, 3862, 3860, 3860,
++	/*  42% */ 3849, 3852, 3853, 3851, 3850,
++	/*  40% */ 3844, 3845, 3845, 3842, 3841,
++	/*  38% */ 3839, 3838, 3838, 3834, 3833,
++	/*  36% */ 3835, 3831, 3831, 3827, 3826,
++	/*  34% */ 3831, 3826, 3825, 3820, 3819,
++	/*  32% */ 3827, 3821, 3820, 3814, 3812,
++	/*  30% */ 3824, 3817, 3815, 3809, 3806,
++	/*  28% */ 3821, 3814, 3810, 3803, 3799,
++	/*  26% */ 3817, 3810, 3806, 3797, 3792,
++	/*  24% */ 3812, 3804, 3799, 3789, 3784,
++	/*  22% */ 3805, 3796, 3790, 3779, 3773,
++	/*  20% */ 3796, 3786, 3780, 3769, 3762,
++	/*  18% */ 3783, 3775, 3768, 3757, 3750,
++	/*  16% */ 3769, 3761, 3755, 3745, 3737,
++	/*  14% */ 3753, 3743, 3738, 3728, 3720,
++	/*  12% */ 3736, 3727, 3722, 3714, 3706,
++	/*  10% */ 3723, 3715, 3711, 3704, 3698,
++	/*   9% */ 3720, 3712, 3708, 3701, 3695,
++	/*   8% */ 3716, 3709, 3705, 3699, 3693,
++	/*   7% */ 3712, 3707, 3704, 3697, 3691,
++	/*   6% */ 3709, 3703, 3699, 3692, 3684,
++	/*   5% */ 3702, 3686, 3678, 3667, 3657,
++	/*   4% */ 3673, 3642, 3635, 3623, 3613,
++	/*   3% */ 3621, 3583, 3577, 3565, 3555,
++	/*   2% */ 3552, 3502, 3497, 3486, 3476,
++	/*   1% */ 3436, 3363, 3373, 3362, 3351,
++	/*   0% */ 3000, 3000, 3000, 3000, 3000,
++};
++
++static const u16 atl5020_rint_mohm[ATL5020_TEMP_COLS] = {
++	127, 121, 117, 114, 114,
++};
++
++static inline s32 lerp_s32(s32 x, s32 x0, s32 x1, s32 y0, s32 y1)
++{
++	s64 num = (s64)(y1 - y0) * (s64)(x - x0);
++	s32 den = x1 - x0;
++
++	if ((num ^ den) >= 0)
++		return y0 + (s32)((num + den / 2) / den);
++	return y0 + (s32)((num - den / 2) / den);
++}
++
++static int atl5020_ocv_to_soc(u32 ocv_mv, int temp_dc)
++{
++	int t_lo_idx, t_hi_idx, t_lo, t_hi;
++	s32 soc_at_col[2];
++	s32 soc_pcq;
++	int c;
++
++	if (ocv_mv > 4438)
++		ocv_mv = 4438;
++	if (ocv_mv < 3000)
++		ocv_mv = 3000;
++	if (temp_dc < atl5020_temp_dc[0])
++		temp_dc = atl5020_temp_dc[0];
++	if (temp_dc > atl5020_temp_dc[ATL5020_TEMP_COLS - 1])
++		temp_dc = atl5020_temp_dc[ATL5020_TEMP_COLS - 1];
++
++	t_hi_idx = 1;
++	while (t_hi_idx < ATL5020_TEMP_COLS - 1 &&
++	       atl5020_temp_dc[t_hi_idx] < temp_dc)
++		t_hi_idx++;
++	t_lo_idx = t_hi_idx - 1;
++	t_lo = atl5020_temp_dc[t_lo_idx];
++	t_hi = atl5020_temp_dc[t_hi_idx];
++
++	for (c = 0; c < 2; c++) {
++		int col = (c == 0) ? t_lo_idx : t_hi_idx;
++		int r;
++		s32 v_hi, v_lo;
++		s32 soc_hi_cq, soc_lo_cq;
++
++		if ((s32)ocv_mv >=
++		    (s32)atl5020_ocv_mv[0 * ATL5020_TEMP_COLS + col]) {
++			soc_at_col[c] = 10000;
++			continue;
++		}
++		if ((s32)ocv_mv <=
++		    (s32)atl5020_ocv_mv[(ATL5020_SOC_ROWS - 1) *
++					ATL5020_TEMP_COLS + col]) {
++			soc_at_col[c] = 0;
++			continue;
++		}
++
++		soc_at_col[c] = 0;
++		for (r = 0; r < ATL5020_SOC_ROWS - 1; r++) {
++			v_hi = atl5020_ocv_mv[r * ATL5020_TEMP_COLS + col];
++			v_lo = atl5020_ocv_mv[(r + 1) * ATL5020_TEMP_COLS + col];
++
++			if (v_lo > v_hi) {
++				s32 tmp = v_lo; v_lo = v_hi; v_hi = tmp;
++			}
++
++			if ((s32)ocv_mv <= v_hi && (s32)ocv_mv >= v_lo) {
++				soc_hi_cq = (s32)atl5020_soc_pct[r] * 100;
++				soc_lo_cq = (s32)atl5020_soc_pct[r + 1] * 100;
++				if (v_hi == v_lo)
++					soc_at_col[c] = soc_hi_cq;
++				else
++					soc_at_col[c] = lerp_s32(
++						(s32)ocv_mv, v_lo, v_hi,
++						soc_lo_cq, soc_hi_cq);
++				break;
++			}
++		}
++	}
++
++	if (t_hi == t_lo)
++		soc_pcq = soc_at_col[0];
++	else
++		soc_pcq = lerp_s32(temp_dc, t_lo, t_hi,
++				   soc_at_col[0], soc_at_col[1]);
++
++	if (soc_pcq < 0)
++		soc_pcq = 0;
++	if (soc_pcq > 10000)
++		soc_pcq = 10000;
++	return (int)((soc_pcq + 50) / 100);
++}
++
++static u32 compute_live_ocv(u32 v_now_uv, s32 i_ua_qg_raw, int temp_dc)
++{
++	int t_lo_idx, t_hi_idx, t_lo, t_hi;
++	s32 r_lo, r_hi, r_mohm;
++	s64 drop_uv, ocv_uv;
++
++	if (temp_dc < atl5020_temp_dc[0])
++		temp_dc = atl5020_temp_dc[0];
++	if (temp_dc > atl5020_temp_dc[ATL5020_TEMP_COLS - 1])
++		temp_dc = atl5020_temp_dc[ATL5020_TEMP_COLS - 1];
++
++	t_hi_idx = 1;
++	while (t_hi_idx < ATL5020_TEMP_COLS - 1 &&
++	       atl5020_temp_dc[t_hi_idx] < temp_dc)
++		t_hi_idx++;
++	t_lo_idx = t_hi_idx - 1;
++	t_lo = atl5020_temp_dc[t_lo_idx];
++	t_hi = atl5020_temp_dc[t_hi_idx];
++
++	r_lo = (s32)atl5020_rint_mohm[t_lo_idx];
++	r_hi = (s32)atl5020_rint_mohm[t_hi_idx];
++	r_mohm = (t_hi == t_lo) ? r_lo
++				: lerp_s32(temp_dc, t_lo, t_hi, r_lo, r_hi);
++
++	drop_uv = ((s64)i_ua_qg_raw * (s64)r_mohm) / 1000;
++	drop_uv = clamp_val(drop_uv, -150000, 150000);
++	ocv_uv = (s64)v_now_uv + drop_uv;
++
++	if (ocv_uv < 3000000)
++		ocv_uv = 3000000;
++	if (ocv_uv > 4438000)
++		ocv_uv = 4438000;
++	return (u32)((ocv_uv + 500) / 1000);
++}
++
++struct qcom_qg_chip {
++	struct device *dev;
++	struct regmap *regmap;
++	unsigned int base;
++
++	struct iio_channel *batt_therm_chan;
++
++	struct nvmem_device *sdam;
++
++	struct power_supply *batt_psy;
++	struct power_supply_battery_info *batt_info;
++
++	struct delayed_work refresh_work;
++	struct notifier_block nb;
++
++	int smoothed_soc;
++	int reported_soc;
++	unsigned long last_step_jiffies;
++	bool was_plugged;
++};
++
++static bool qcom_qg_is_cable_plugged(struct qcom_qg_chip *chip)
++{
++	unsigned int v = 0;
++
++	if (chip->regmap && !regmap_read(chip->regmap, PM6150_USBIN_INT_RT_STS_REG, &v))
++		return !!(v & PM6150_USBIN_PLUGIN_RT_STS_BIT);
++
++	return false;
++}
++
++static int qcom_qg_get_current(struct qcom_qg_chip *chip, u8 offset, int *val)
++{
++	s16 temp;
++	u8 readval[2];
++	int ret;
++
++	ret = regmap_bulk_read(chip->regmap, chip->base + offset, readval, 2);
++	if (ret) {
++		dev_err(chip->dev, "Failed to read current: %d\n", ret);
++		return ret;
++	}
++
++	temp = (s16)(readval[1] << 8 | readval[0]);
++	*val = div_s64((s64)temp * 152588, 1000);
++
++	return 0;
++}
++
++static int qcom_qg_get_voltage(struct qcom_qg_chip *chip, u8 offset, int *val)
++{
++	int ret, temp;
++	u8 readval[2];
++
++	ret = regmap_bulk_read(chip->regmap, chip->base + offset, readval, 2);
++	if (ret) {
++		dev_err(chip->dev, "Failed to read voltage: %d\n", ret);
++		return ret;
++	}
++
++	temp = readval[1] << 8 | readval[0];
++	*val = div_u64((u64)temp * 194637, 1000);
++
++	return 0;
++}
++
++static int qcom_qg_get_capacity(struct qcom_qg_chip *chip, int *val)
++{
++	int ret, v_now, i_now, t_dc = 250;
++	u32 ocv_mv;
++	int raw_cap, target_soc;
++	bool is_plugged;
++
++	ret = qcom_qg_get_voltage(chip, QG_S2_NORMAL_AVG_V_DATA0_REG, &v_now);
++	if (ret)
++		return ret;
++
++	/* Pair S2 average voltage with S2 average current to eliminate transient ADC noise */
++	ret = qcom_qg_get_current(chip, QG_S2_NORMAL_AVG_I_DATA0_REG, &i_now);
++	if (ret)
++		i_now = 0;
++
++	if (chip->batt_therm_chan) {
++		int temp_raw = 0;
++		if (!iio_read_channel_processed(chip->batt_therm_chan, &temp_raw))
++			t_dc = temp_raw / 100; /* millidegC to deci-degC */
++	}
++
++	ocv_mv = compute_live_ocv((u32)v_now, i_now, t_dc);
++	raw_cap = atl5020_ocv_to_soc(ocv_mv, t_dc);
++	raw_cap = clamp(raw_cap, 0, 100);
++
++	is_plugged = qcom_qg_is_cable_plugged(chip);
++
++	if (chip->smoothed_soc < 0) {
++		/* First reading: initialize to raw reading */
++		chip->smoothed_soc = raw_cap * 100;
++		chip->reported_soc = raw_cap;
++		chip->last_step_jiffies = jiffies;
++		chip->was_plugged = is_plugged;
++	} else {
++		/* Cable plug state transition: allow faster sync if disconnected/connected */
++		if (chip->was_plugged != is_plugged) {
++			chip->was_plugged = is_plugged;
++			chip->last_step_jiffies = jiffies - msecs_to_jiffies(6000);
++		}
++
++		/* Low-pass EMA filter (time constant ~16 samples): filters out momentary load dips */
++		chip->smoothed_soc = (chip->smoothed_soc * 15 + raw_cap * 100) / 16;
++	}
++
++	target_soc = (chip->smoothed_soc + 50) / 100;
++	target_soc = clamp(target_soc, 0, 100);
++
++	/* Slew-rate limiter & direction enforcement: at most 1% step every 6 seconds */
++	if (time_after(jiffies, chip->last_step_jiffies + msecs_to_jiffies(6000))) {
++		if (is_plugged) {
++			/* While charging: only step upwards towards target, reject downward dips */
++			if (target_soc > chip->reported_soc)
++				chip->reported_soc++;
++			else if (target_soc < chip->reported_soc - 3)
++				chip->reported_soc--;
++		} else {
++			/* While discharging: only step downwards towards target, reject upward spikes */
++			if (target_soc < chip->reported_soc)
++				chip->reported_soc--;
++			else if (target_soc > chip->reported_soc + 3)
++				chip->reported_soc++;
++		}
++		chip->last_step_jiffies = jiffies;
++	}
++
++	*val = chip->reported_soc;
++
++	if (chip->sdam) {
++		u8 sdam_soc = (u8)*val;
++		u8 zero = 0;
++		nvmem_device_write(chip->sdam, QG_SDAM_SOC_OFFSET, 1, &sdam_soc);
++		nvmem_device_write(chip->sdam, QG_SDAM_VALID_OFFSET, 1, &zero);
++	}
++
++	return 0;
++}
++
++static enum power_supply_property qcom_qg_props[] = {
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_SCOPE,
++	POWER_SUPPLY_PROP_TECHNOLOGY,
++	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
++	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
++	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_AVG,
++	POWER_SUPPLY_PROP_VOLTAGE_OCV,
++	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_CURRENT_AVG,
++	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
++	POWER_SUPPLY_PROP_CHARGE_FULL,
++	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_TEMP,
++	POWER_SUPPLY_PROP_MODEL_NAME,
++	POWER_SUPPLY_PROP_MANUFACTURER,
++};
++
++static int qcom_qg_get_property(struct power_supply *psy,
++				enum power_supply_property psp,
++				union power_supply_propval *val)
++{
++	struct qcom_qg_chip *chip = power_supply_get_drvdata(psy);
++	int ret;
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_STATUS:
++		if (qcom_qg_is_cable_plugged(chip)) {
++			int cap = 0;
++			qcom_qg_get_capacity(chip, &cap);
++			if (cap >= 100)
++				val->intval = POWER_SUPPLY_STATUS_FULL;
++			else
++				val->intval = POWER_SUPPLY_STATUS_CHARGING;
++		} else {
++			val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
++		}
++		break;
++	case POWER_SUPPLY_PROP_SCOPE:
++		val->intval = POWER_SUPPLY_SCOPE_SYSTEM;
++		break;
++	case POWER_SUPPLY_PROP_TECHNOLOGY:
++		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
++		break;
++	case POWER_SUPPLY_PROP_MODEL_NAME:
++		val->strval = "joyeuse-battery";
++		break;
++	case POWER_SUPPLY_PROP_MANUFACTURER:
++		val->strval = "Xiaomi";
++		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
++		val->intval = chip->batt_info->voltage_max_design_uv;
++		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
++		val->intval = chip->batt_info->voltage_min_design_uv;
++		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
++		ret = qcom_qg_get_voltage(chip,
++				QG_LAST_ADC_V_DATA0_REG, &val->intval);
++		if (ret)
++			return ret;
++		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
++		ret = qcom_qg_get_voltage(chip,
++				QG_S2_NORMAL_AVG_V_DATA0_REG, &val->intval);
++		if (ret)
++			return ret;
++		break;
++	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
++		{
++			int v_now = 0, i_now = 0, t_dc = 250;
++			qcom_qg_get_voltage(chip, QG_S2_NORMAL_AVG_V_DATA0_REG, &v_now);
++			qcom_qg_get_current(chip, QG_LAST_ADC_I_DATA0_REG, &i_now);
++			if (chip->batt_therm_chan) {
++				int tr = 0;
++				if (!iio_read_channel_processed(chip->batt_therm_chan, &tr))
++					t_dc = tr / 100;
++			}
++			val->intval = compute_live_ocv((u32)v_now, i_now, t_dc) * 1000;
++		}
++		break;
++	case POWER_SUPPLY_PROP_CURRENT_NOW:
++		ret = qcom_qg_get_current(chip,
++				QG_LAST_ADC_I_DATA0_REG, &val->intval);
++		if (ret)
++			return ret;
++		val->intval = -val->intval;
++		if (qcom_qg_is_cable_plugged(chip) && val->intval < 0)
++			val->intval = 0;
++		break;
++	case POWER_SUPPLY_PROP_CURRENT_AVG:
++		ret = qcom_qg_get_current(chip,
++				QG_S2_NORMAL_AVG_I_DATA0_REG, &val->intval);
++		if (ret)
++			return ret;
++		val->intval = -val->intval;
++		if (qcom_qg_is_cable_plugged(chip) && val->intval < 0)
++			val->intval = 0;
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
++		val->intval = chip->batt_info->charge_full_design_uah;
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_FULL:
++		ret = nvmem_device_read(chip->sdam,
++				QG_SDAM_LEARNED_CAPACITY_OFFSET, 2, &val->intval);
++		if (ret < 0)
++			val->intval = chip->batt_info->charge_full_design_uah;
++		else
++			val->intval *= 1000; /* mAh to uAh */
++		break;
++	case POWER_SUPPLY_PROP_CAPACITY:
++		ret = qcom_qg_get_capacity(chip, &val->intval);
++		if (ret)
++			return ret;
++		break;
++	case POWER_SUPPLY_PROP_TEMP:
++		ret = iio_read_channel_processed
++					(chip->batt_therm_chan, &val->intval);
++		if (ret < 0)
++			return ret;
++		val->intval /= 100; /* 1/1000 °C (millidegC) to 1/10 °C */
++		break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
++}
++
++static struct power_supply_desc batt_psy_desc = {
++	.name = "qcom_qg",
++	.type = POWER_SUPPLY_TYPE_BATTERY,
++	.properties = qcom_qg_props,
++	.num_properties = ARRAY_SIZE(qcom_qg_props),
++	.get_property = qcom_qg_get_property,
++};
++
++static void qcom_qg_refresh_work(struct work_struct *w)
++{
++	struct qcom_qg_chip *chip = container_of(w, struct qcom_qg_chip,
++						 refresh_work.work);
++
++	if (chip->batt_psy)
++		power_supply_changed(chip->batt_psy);
++
++	schedule_delayed_work(&chip->refresh_work, msecs_to_jiffies(QG_REFRESH_MS));
++}
++
++static int qcom_qg_notifier(struct notifier_block *nb, unsigned long ev, void *v)
++{
++	struct qcom_qg_chip *chip = container_of(nb, struct qcom_qg_chip, nb);
++	struct power_supply *psy = v;
++
++	if (!psy || !psy->desc || !psy->desc->name)
++		return NOTIFY_OK;
++	if (psy == chip->batt_psy)
++		return NOTIFY_OK;
++
++	if (ev == PSY_EVENT_PROP_CHANGED) {
++		if (!strncmp(psy->desc->name, TCPM_PREFIX, sizeof(TCPM_PREFIX) - 1))
++			power_supply_changed(chip->batt_psy);
++	}
++	return NOTIFY_OK;
++}
++
++static int qcom_qg_probe(struct platform_device *pdev)
++{
++	struct qcom_qg_chip *chip;
++	struct power_supply_config psy_cfg = {};
++	int ret;
++
++	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
++	if (!chip)
++		return -ENOMEM;
++
++	chip->dev = &pdev->dev;
++
++	/* Regmap */
++	chip->regmap = dev_get_regmap(chip->dev->parent, NULL);
++	if (!chip->regmap)
++		return dev_err_probe(chip->dev, -ENODEV,
++				     "Failed to locate the regmap\n");
++
++	/* Get base address */
++	ret = device_property_read_u32(chip->dev, "reg", &chip->base);
++	if (ret < 0)
++		return dev_err_probe(chip->dev, ret,
++				     "Couldn't read base address\n");
++
++	/* ADC for thermal channel */
++	chip->batt_therm_chan = devm_iio_channel_get(chip->dev, "batt-therm");
++	if (IS_ERR(chip->batt_therm_chan))
++		return dev_err_probe(chip->dev, PTR_ERR(chip->batt_therm_chan),
++				     "Couldn't get batt-therm IIO channel\n");
++
++	/* NVMEM for SDAM access */
++	chip->sdam = devm_nvmem_device_get(chip->dev, NULL);
++	if (IS_ERR(chip->sdam))
++		return dev_err_probe(chip->dev, PTR_ERR(chip->sdam),
++				     "Couldn't get SDAM nvmem device\n");
++
++	/* Clear SDAM_VALID so Android/recovery recalculates accurate PON OCV on boot */
++	{
++		u8 zero = 0;
++		nvmem_device_write(chip->sdam, QG_SDAM_VALID_OFFSET, 1, &zero);
++	}
++
++	psy_cfg.drv_data = chip;
++
++	/* Power supply */
++	chip->batt_psy =
++		devm_power_supply_register(chip->dev, &batt_psy_desc, &psy_cfg);
++	if (IS_ERR(chip->batt_psy))
++		return dev_err_probe(chip->dev, PTR_ERR(chip->batt_psy),
++				     "Failed to register power supply\n");
++
++	/* Battery info */
++	ret = power_supply_get_battery_info(chip->batt_psy, &chip->batt_info);
++	if (ret)
++		return dev_err_probe(chip->dev, ret,
++				     "Failed to get battery info\n");
++
++	platform_set_drvdata(pdev, chip);
++
++	chip->smoothed_soc = -1;
++	chip->reported_soc = -1;
++	chip->last_step_jiffies = jiffies;
++	chip->was_plugged = qcom_qg_is_cable_plugged(chip);
++
++	INIT_DELAYED_WORK(&chip->refresh_work, qcom_qg_refresh_work);
++	schedule_delayed_work(&chip->refresh_work, msecs_to_jiffies(QG_REFRESH_MS));
++
++	chip->nb.notifier_call = qcom_qg_notifier;
++	power_supply_reg_notifier(&chip->nb);
++
++	return 0;
++}
++
++static void qcom_qg_shutdown(struct platform_device *pdev)
++{
++	struct qcom_qg_chip *chip = platform_get_drvdata(pdev);
++	u8 zero = 0;
++	int cap = 0;
++
++	if (!chip || !chip->sdam)
++		return;
++
++	if (!qcom_qg_get_capacity(chip, &cap)) {
++		u8 sdam_soc = (u8)clamp(cap, 0, 100);
++		nvmem_device_write(chip->sdam, QG_SDAM_SOC_OFFSET, 1, &sdam_soc);
++	}
++
++	/* Invalidate SDAM_VALID to force Android to recalculate clean PON OCV at boot */
++	nvmem_device_write(chip->sdam, QG_SDAM_VALID_OFFSET, 1, &zero);
++	dev_info(chip->dev, "SDAM_VALID invalidated for clean reboot\n");
++}
++
++static void qcom_qg_remove(struct platform_device *pdev)
++{
++	struct qcom_qg_chip *chip = platform_get_drvdata(pdev);
++
++	if (chip) {
++		cancel_delayed_work_sync(&chip->refresh_work);
++		power_supply_unreg_notifier(&chip->nb);
++	}
++	qcom_qg_shutdown(pdev);
++}
++
++static const struct of_device_id qcom_qg_of_match[] = {
++	{ .compatible = "qcom,pm6150-qg", },
++	{ /* sentinel */ },
++};
++MODULE_DEVICE_TABLE(of, qcom_qg_of_match);
++
++static struct platform_driver qcom_qg_driver = {
++	.driver = {
++		.name = "qcom,qcom_qg",
++		.of_match_table = qcom_qg_of_match,
++	},
++	.probe = qcom_qg_probe,
++	.remove = qcom_qg_remove,
++	.shutdown = qcom_qg_shutdown,
++};
++
++module_platform_driver(qcom_qg_driver);
++
++MODULE_AUTHOR("Danila Tikhonov <danila@jiaxyga.com>");
++MODULE_DESCRIPTION("Qualcomm PMIC QGauge (QG) driver with ATL 5020 SoC LUT");
++MODULE_LICENSE("GPL");
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -217,6 +217,16 @@
+ 	  which is used on modern Qualcomm platforms to provide battery and
+ 	  power supply information.
+ 
++config BATTERY_QCOM_QG
++	tristate "Qualcomm PMIC QGauge driver"
++	depends on MFD_SPMI_PMIC
++	depends on IIO
++	help
++	  Say Y here to enable the Qualcomm Technologies, Inc. QGauge driver
++	  which uses the periodic sampling of the battery voltage and current
++	  to determine the battery state-of-charge (SOC) and supports other
++	  battery management features.
++
+ config BATTERY_OLPC
+ 	tristate "One Laptop Per Child battery"
+ 	depends on OLPC_EC
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -38,6 +38,7 @@
+ obj-$(CONFIG_BATTERY_LENOVO_YOGA_C630) += lenovo_yoga_c630_battery.o
+ obj-$(CONFIG_BATTERY_PMU)	+= pmu_battery.o
+ obj-$(CONFIG_BATTERY_QCOM_BATTMGR)	+= qcom_battmgr.o
++obj-$(CONFIG_BATTERY_QCOM_QG)	+= qcom_qg.o
+ obj-$(CONFIG_BATTERY_OLPC)	+= olpc_battery.o
+ obj-$(CONFIG_BATTERY_SAMSUNG_SDI)	+= samsung-sdi-battery.o
+ obj-$(CONFIG_BATTERY_S2MU005)	+= s2mu005-battery.o
