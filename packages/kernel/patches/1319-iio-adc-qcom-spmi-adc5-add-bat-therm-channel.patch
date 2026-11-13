@@ -1,0 +1,20 @@
+Subject: [PATCH] iio: adc: qcom-spmi-adc5: add BAT_THERM_100K_PU channel
+
+The PM6150 BAT_THERM channel entry went away from adc5_chans_pmic, so the
+qgauge driver's "batt-therm" IIO channel had no corresponding processed
+temperature channel and reading the battery temperature returned -EINVAL.
+
+Restore the ADC5_BAT_THERM_100K_PU entry with the 100K pull-up thermistor
+scale used by the PM6150 battery node.
+
+--- a/drivers/iio/adc/qcom-spmi-adc5.c
++++ b/drivers/iio/adc/qcom-spmi-adc5.c
+@@ -542,6 +542,8 @@
+ 					SCALE_HW_CALIB_DEFAULT)
+ 	[ADC5_XO_THERM_100K_PU]	= ADC5_CHAN_TEMP("xo_therm", 0,
+ 					SCALE_HW_CALIB_XOTHERM)
++	[ADC5_BAT_THERM_100K_PU] = ADC5_CHAN_TEMP("bat_therm", 0,
++					SCALE_HW_CALIB_THERM_100K_PULLUP)
+ 	[ADC5_BAT_ID_100K_PU]	= ADC5_CHAN_TEMP("bat_id", 0,
+ 					SCALE_HW_CALIB_DEFAULT)
+ 	[ADC5_AMUX_THM1_100K_PU] = ADC5_CHAN_TEMP("amux_thm1_100k_pu", 0,

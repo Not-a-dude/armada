@@ -432,6 +432,11 @@
 	status = "okay";
 };
 
+&pm6150_qgauge {
+	monitored-battery = <&battery>;
+	status = "okay";
+};
+
 &pm6150l_wled {
 	qcom,cabc;
 	qcom,cabc-sel = <1>;

@@ -1267,3 +1267,18 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   upstream: https://lore.kernel.org/r/20260910-sm7125-samsung-v3-2-c467bea0fb9c@gmail.com
   notes: Not in 7.2.6. arm64 defconfig selects QCOM_TZMEM_MODE_SHMBRIDGE and the miatoll DTs only list `qcom,sm7125`, so the existing `qcom,sc7180` entry does not match; without this, the rmtfs memory assignment stalls during initcalls and boot hangs silently.
 
+
+- `patches/1318-power-supply-add-qcom-pm6150-qgauge-driver.patch`
+  source: local import from the SM7125 6.14.7 tree (`drivers/power/supply/qcom_qg.c`)
+  upstream: unknown
+  notes: Restores the PM6150 QGauge fuel gauge that upstream removed, with the Joyeuse ATL 5020 mAh capacity model. Dropped `power_supply_config.of_node`, which no longer exists in 7.2.6.
+
+- `patches/1319-iio-adc-qcom-spmi-adc5-add-bat-therm-channel.patch`
+  source: local import from the SM7125 6.14.7 tree
+  upstream: unknown
+  notes: Restores the `ADC5_BAT_THERM_100K_PU` processed temperature channel used by the qgauge `batt-therm` IIO consumer.
+
+- `patches/1320-arm64-dts-qcom-pm6150-add-qgauge-sdam-adc-nodes.patch`
+  source: local import from the SM7125 6.14.7 tree
+  upstream: unknown
+  notes: Restores the PM6150 qgauge, SPMI SDAM NVRAM and bat_therm/bat_id ADC nodes; boards enable the gauge themselves.
