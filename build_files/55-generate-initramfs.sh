@@ -38,6 +38,7 @@ dracut \
     --add ostree \
     --add armada-splash \
     --add armada-ostree-fallback \
+    --add armada-diag \
     --install "${early_firmware[*]} ${miatoll_firmware[*]}" \
     "${IMG}" "${KVER}"
 
