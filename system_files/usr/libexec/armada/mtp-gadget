@@ -4,6 +4,7 @@ set -euo pipefail
 gadget=/sys/kernel/config/usb_gadget/armada-mtp
 config="$gadget/configs/c.1"
 function="$gadget/functions/ffs.mtp"
+ecm="$gadget/functions/ecm.usb0"
 ffs=/dev/ffs-mtp
 runtime=/run/armada-mtp
 role_state="$runtime/previous-role"
@@ -54,6 +55,13 @@ case "${1:-}" in
         printf '2' > "$config/MaxPower"
         mkdir "$function"
         ln -s "$function" "$config/ffs.mtp"
+        # Second function in the same config: a CDC Ethernet link for SSH
+        # debugging (192.168.7.2 on usb0). A UDC binds one gadget, so the
+        # network interface has to share the MTP gadget's configuration.
+        mkdir "$ecm"
+        printf '02:00:00:00:00:01' > "$ecm/dev_addr"
+        printf '02:00:00:00:00:02' > "$ecm/host_addr"
+        ln -s "$ecm" "$config/ecm.usb0"
         install -d -m 0755 "$ffs"
         armada_uid="$(id -u armada)"
         armada_gid="$(id -g armada)"
@@ -125,7 +133,9 @@ case "${1:-}" in
             umount "$ffs" || :
         fi
         [[ ! -L "$config/ffs.mtp" ]] || rm "$config/ffs.mtp" || :
+        [[ ! -L "$config/ecm.usb0" ]] || rm "$config/ecm.usb0" || :
         [[ ! -d "$function" ]] || rmdir "$function" || :
+        [[ ! -d "$ecm" ]] || rmdir "$ecm" || :
         [[ ! -d "$config/strings/0x409" ]] || rmdir "$config/strings/0x409" || :
         [[ ! -d "$config" ]] || rmdir "$config" || :
         [[ ! -d "$gadget/strings/0x409" ]] || rmdir "$gadget/strings/0x409" || :

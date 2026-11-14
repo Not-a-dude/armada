@@ -22,3 +22,6 @@ TimeoutStopSec=30
 NoNewPrivileges=yes
 # Do not add PrivateTmp=, ProtectSystem=, or ProtectHome=; their mount namespaces
 # hide the FunctionFS mount created by ExecStartPre from umtprd.
+
+[Install]
+WantedBy=multi-user.target

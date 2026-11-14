@@ -51,6 +51,45 @@ linux=$(sed -n 's/^linux //p' "${entry}" | head -1)
 dtbs=${BOOTROOT}$(dirname "${linux#/boot}")/dtb/qcom
 [ -d "${dtbs}" ] || die "missing DTB directory: ${dtbs}"
 
+# systemd-boot has no fdtdir: it boots exactly one devicetree file. Pick the DTB
+# this machine is running, matching the model string first (it is unique per
+# panel variant) and falling back to the first compatible entry.
+select_dtb() {
+    local dir=$1 model compat dtb found=() hits=()
+    model=$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)
+    compat=$(tr '\0' '\n' </sys/firmware/devicetree/base/compatible 2>/dev/null | head -1 || true)
+    shopt -s nullglob
+    local all=("${dir}"/*.dtb)
+    if [ "${#all[@]}" -eq 1 ]; then
+        basename "${all[0]}"
+        return 0
+    fi
+    if [ -n "${model}" ]; then
+        for dtb in "${all[@]}"; do
+            grep -qaF -- "${model}" "${dtb}" && hits+=("${dtb}")
+        done
+        if [ "${#hits[@]}" -eq 1 ]; then
+            basename "${hits[0]}"
+            return 0
+        fi
+    fi
+    if [ -n "${compat}" ]; then
+        for dtb in "${all[@]}"; do
+            grep -qaF -- "${compat}" "${dtb}" && found+=("${dtb}")
+        done
+        if [ "${#found[@]}" -eq 1 ]; then
+            basename "${found[0]}"
+            return 0
+        fi
+    fi
+    printf 'armada-efi-update: cannot pick one DTB (model "%s", compatible "%s") among: %s\n' \
+        "${model}" "${compat}" "${all[*]##*/}" >&2
+    return 1
+}
+dtb_name=$(select_dtb "${dtbs}") || die "devicetree selection failed"
+devicetree="${linux#/boot}"
+devicetree="${devicetree%/*}/dtb/qcom/${dtb_name}"
+
 work=$(mktemp -d)
 trap 'rm -rf "${work}"' EXIT
 mkdir -p "${work}/entries"
@@ -59,9 +98,10 @@ for file in "${BOOTROOT}/loader/entries"/*.conf; do
     [ -f "${file}" ] || continue
     rollback=
     [ "${file}" = "${entry}" ] || rollback=' (Rollback)'
-    awk -v rollback="${rollback}" '
+    awk -v rollback="${rollback}" -v devicetree="${devicetree}" '
         /^title / { title = substr($0, 7); next }
         /^version / { version = substr($0, 9); next }
+        /^fdtdir / { fdtdir = 1; next }
         { sub(/^linux \/boot\//, "linux /"); sub(/^initrd \/boot\//, "initrd /"); lines[++n] = $0 }
         END {
             sub(/ \(ostree:[0-9]+\)$/, "", title)
@@ -72,6 +112,7 @@ for file in "${BOOTROOT}/loader/entries"/*.conf; do
             if (title != "") print "title " title rollback
             if (version != "") print "version " version
             for (i = 1; i <= n; i++) print lines[i]
+            if (fdtdir && devicetree != "") print "devicetree " devicetree
         }' "${file}" > "${work}/entries/armada-${file##*/}"
 done
 # ostree gives the next-boot deployment the highest entry number, and OpenABL
