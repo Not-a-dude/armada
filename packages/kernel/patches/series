@@ -358,3 +358,4 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1318-power-supply-add-qcom-pm6150-qgauge-driver.patch
 1319-iio-adc-qcom-spmi-adc5-add-bat-therm-channel.patch
 1320-arm64-dts-qcom-pm6150-add-qgauge-sdam-adc-nodes.patch
+1321-tools-uapi-linux-types-add-u128.patch
