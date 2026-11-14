@@ -4,7 +4,9 @@ The tools header copies shadow the installed uapi headers for tools/
 builds (libbpf, resolve_btfids, libsubcmd). They predate the 128-bit types
 in include/uapi/linux/types.h, so on distributions whose glibc pulls
 <asm/sigcontext.h> (which uses __u128) into <signal.h>, the host tools fail
-with "unknown type name '__u128'" -- Fedora 44 does.
+with "unknown type name '__u128'" -- Fedora 44 does.  Pre-include the tools
+header copy where asm/ headers are pulled in before <linux/types.h>; doing it
+globally through HOSTCFLAGS would also hit in-tree host programs.
 
 --- a/tools/include/uapi/linux/types.h
 +++ b/tools/include/uapi/linux/types.h
@@ -42,3 +44,18 @@ with "unknown type name '__u128'" -- Fedora 44 does.
  typedef __u32 u32;
  typedef __s32 s32;
  
+--- a/tools/bpf/resolve_btfids/Makefile
++++ b/tools/bpf/resolve_btfids/Makefile
+@@ -16,8 +16,11 @@
+ endif
+ 
+ # Overrides for the prepare step libraries.
++# Fedora's aarch64 asm/ptrace.h and asm/sigcontext.h use __u128 without
++# pulling in <linux/types.h>, so the host libraries need it pre-included.
+ HOST_OVERRIDES := AR="$(HOSTAR)" CC="$(HOSTCC)" LD="$(HOSTLD)" ARCH="$(HOSTARCH)" \
+-		  CROSS_COMPILE="" CLANG_CROSS_FLAGS="" EXTRA_CFLAGS="$(HOSTCFLAGS)"
++		  CROSS_COMPILE="" CLANG_CROSS_FLAGS="" \
++		  EXTRA_CFLAGS="$(HOSTCFLAGS) -include $(srctree)/tools/include/uapi/linux/types.h"
+ 
+ RM      ?= rm
+ HOSTCC  ?= gcc

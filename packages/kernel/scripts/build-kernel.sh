@@ -21,11 +21,6 @@ KCONFIG_OVERRIDES="${REPO_ROOT}/config/armada-kernel.config.overrides"
 HOST_ARCH=$(uname -m)
 JOBS=$(nproc)
 MAKE_ARGS=(-j"${JOBS}" LLVM=1 ARCH=arm64)
-# Fedora 44's glibc pulls <asm/sigcontext.h> into <signal.h>; that header uses
-# __u128, which the kernel-headers package does not put on the tools' include
-# path. tools/include/uapi/linux/types.h carries the definition (patch 1321),
-# so force it in before any libc header.
-MAKE_ARGS+=(HOSTCFLAGS="-include linux/types.h")
 
 # LLVM/Clang toolchain: clang + lld + llvm-{ar,nm,objcopy,objdump,readelf,strip}.
 for tool in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip; do
