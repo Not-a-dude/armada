@@ -1,8 +1,8 @@
-Subject: [PATCH] tools: uapi: define the 128-bit types in the tools header copy
+Subject: [PATCH] tools: define the 128-bit types in the host tools headers
 
-tools/include/uapi/linux/types.h shadows the installed uapi header for
-tools/ builds (libbpf, resolve_btfids, libsubcmd). It predates the 128-bit
-types in include/uapi/linux/types.h, so on distributions whose glibc pulls
+The tools header copies shadow the installed uapi headers for tools/
+builds (libbpf, resolve_btfids, libsubcmd). They predate the 128-bit types
+in include/uapi/linux/types.h, so on distributions whose glibc pulls
 <asm/sigcontext.h> (which uses __u128) into <signal.h>, the host tools fail
 with "unknown type name '__u128'" -- Fedora 44 does.
 
@@ -16,10 +16,29 @@ with "unknown type name '__u128'" -- Fedora 44 does.
 +/* Mirror include/uapi/linux/types.h: newer libc headers (asm/sigcontext.h)
 + * use __u128, and this copy shadows the installed uapi header for tools. */
 +#ifdef __SIZEOF_INT128__
-+typedef __signed__ __int128 __s128 __attribute__((aligned(16)));
++typedef signed __int128 __s128 __attribute__((aligned(16)));
 +typedef unsigned __int128 __u128 __attribute__((aligned(16)));
 +#endif
 +
  typedef __u16 __bitwise __le16;
  typedef __u16 __bitwise __be16;
  typedef __u32 __bitwise __le32;
+--- a/tools/include/linux/types.h	2026-11-14 18:04:17.932892526 +0700
++++ b/tools/include/linux/types.h	2026-11-14 18:04:17.949735936 +0700
+@@ -33,6 +33,16 @@
+ typedef uint64_t u64;
+ typedef int64_t s64;
+ 
++/*
++ * The kernel's uapi <linux/types.h> defines these. Distros that pull
++ * <asm/sigcontext.h> / <asm/ptrace.h> into libc headers need them before
++ * those headers are parsed; this file shadows the uapi copy for host tools.
++ */
++#ifdef __SIZEOF_INT128__
++typedef signed __int128 __s128 __attribute__((aligned(16)));
++typedef unsigned __int128 __u128 __attribute__((aligned(16)));
++#endif
++
+ typedef __u32 u32;
+ typedef __s32 s32;
+ 
