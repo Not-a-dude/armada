@@ -1,20 +1,20 @@
-Subject: [PATCH] tools: uapi: define __u128 in the tools header copy
+Subject: [PATCH] tools: uapi: define the 128-bit types in the tools header copy
 
 tools/include/uapi/linux/types.h shadows the installed uapi header for
 tools/ builds (libbpf, resolve_btfids, libsubcmd). It predates the 128-bit
-types that include/uapi/linux/types.h grew, so on distributions whose glibc
-now pulls <asm/sigcontext.h> (which uses __u128) into <signal.h>, the host
-tools fail with "unknown type name '__u128'" -- e.g. Fedora 44.
-
-Mirror the upstream definition in the copy so the tools build against it.
+types in include/uapi/linux/types.h, so on distributions whose glibc pulls
+<asm/sigcontext.h> (which uses __u128) into <signal.h>, the host tools fail
+with "unknown type name '__u128'" -- Fedora 44 does.
 
 --- a/tools/include/uapi/linux/types.h
 +++ b/tools/include/uapi/linux/types.h
-@@ -7,6 +7,11 @@
- #ifndef __ASSEMBLER__
+@@ -8,6 +8,14 @@
  
  /* copied from linux:include/uapi/linux/types.h */
  #define __bitwise
++
++/* Mirror include/uapi/linux/types.h: newer libc headers (asm/sigcontext.h)
++ * use __u128, and this copy shadows the installed uapi header for tools. */
 +#ifdef __SIZEOF_INT128__
 +typedef __signed__ __int128 __s128 __attribute__((aligned(16)));
 +typedef unsigned __int128 __u128 __attribute__((aligned(16)));
@@ -22,3 +22,4 @@ Mirror the upstream definition in the copy so the tools build against it.
 +
  typedef __u16 __bitwise __le16;
  typedef __u16 __bitwise __be16;
+ typedef __u32 __bitwise __le32;
