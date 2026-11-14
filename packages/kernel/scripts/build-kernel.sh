@@ -203,20 +203,34 @@ if [ -f "${KCONFIG_OVERRIDES}" ]; then
     # kconfig's conf can't parse trailing inline comments; strip them off assignments
     sed -E '/^[[:space:]]*CONFIG_[A-Z0-9_]+=/ s/[[:space:]]*#.*$//' "${KCONFIG_OVERRIDES}" > "${frag}"
     bash scripts/kconfig/merge_config.sh .config "${frag}" 2>&1 | tee "${merge_log}"
-    config_error=0
-    while IFS= read -r requested; do
-        case "${requested}" in
-            CONFIG_*=y)
-                symbol="${requested%%=*}"
-                if ! grep -qx "${symbol}=y" .config; then
-                    actual=$(grep -E "^${symbol}=" .config || true)
-                    echo "ERROR: ${requested} did not survive Kconfig dependencies; actual: ${actual:-not set}"
-                    config_error=1
-                fi
+    # Kconfig is last-wins, and "# CONFIG_X is not set" is an explicit off: the
+    # fragment disables SM7750-only drivers this way for the SM7125 memory
+    # budget, so verify the *final* requested value of each symbol.
+    declare -A final_value=()
+    while IFS= read -r line; do
+        case "${line}" in
+            "# CONFIG_"*" is not set")
+                symbol="${line#\# }"
+                final_value["${symbol%% *}"]=n
+                ;;
+            CONFIG_*=*)
+                final_value["${line%%=*}"]="${line#*=}"
                 ;;
         esac
     done < "${frag}"
-    if [ "${config_error}" -ne 0 ] || grep -q "not in final .config" "${merge_log}"; then
+    config_error=0
+    for symbol in "${!final_value[@]}"; do
+        [ "${final_value[${symbol}]}" = y ] || continue
+        if ! grep -qx "${symbol}=y" .config; then
+            actual=$(grep -E "^${symbol}=" .config || true)
+            echo "ERROR: ${symbol}=y did not survive Kconfig dependencies; actual: ${actual:-not set}"
+            config_error=1
+        fi
+    done
+    # "not in final .config" covers symbols whose parent option the fragment
+    # turned off and names that don't exist; both are reported above already for
+    # anything still requested as =y, so this is guidance, not a failure.
+    if [ "${config_error}" -ne 0 ]; then
         rm -f "${frag}" "${merge_log}"
         echo "ERROR: a requested CONFIG didn't survive Kconfig deps (see above); check the depends-on chain."
         exit 1

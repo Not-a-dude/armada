@@ -1,0 +1,38 @@
+# Minimal Armada rootfs for the first miatoll bring-up.
+#
+# The real image (KDE, Steam, FEX, Proton) does not fit in the 8 GiB `super`
+# partition, and userdata still holds the Arch install we are running from. This
+# image keeps only what the boot chain needs — kernel, miatoll firmware, the
+# armada splash, sshd and a USB-Ethernet debug link — so it can boot from
+# `super` and then install the full image with armada-installer.
+#
+# Build:
+#   podman build -f bringup/Containerfile \
+#     --build-arg KERNEL_REF=localhost/armada/pkg/kernel:<hash> \
+#     --build-arg ARMADA_SPLASH_REF=localhost/armada/pkg/armada-splash:<hash> \
+#     --build-arg UMTP_RESPONDER_REF=localhost/armada/pkg/umtp-responder:<hash> \
+#     -t localhost/armada-bringup:latest .
+# ARGs used in FROM lines must be declared before the first FROM (global scope).
+ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:44
+ARG KERNEL_REF
+ARG ARMADA_SPLASH_REF
+ARG UMTP_RESPONDER_REF
+
+FROM ${KERNEL_REF} AS kernel
+
+FROM ${ARMADA_SPLASH_REF} AS splash
+
+FROM ${UMTP_RESPONDER_REF} AS umtp
+
+FROM scratch AS ctx
+COPY bringup/build.sh /build.sh
+COPY system_files /system_files/
+
+FROM ${BASE_IMAGE}
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=kernel,source=/kernel,target=/kernel \
+    --mount=type=bind,from=splash,source=/rpms,target=/splash \
+    --mount=type=bind,from=umtp,source=/rpms,target=/umtp \
+    bash /ctx/build.sh
+
+RUN bootc container lint

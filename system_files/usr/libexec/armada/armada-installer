@@ -320,6 +320,10 @@ def discover_device(override=None):
 
 
 def refuse_boot_disk(device):
+    # Bring-up escape hatch: there is no second disk to install from, so the
+    # caller explicitly opts into wiping the disk the running system booted from.
+    if os.environ.get("ARMADA_ALLOW_BOOT_DISK") == "1":
+        return
     mount = "/sysroot" if Path("/sysroot").is_mount() else "/"
     source = output("findmnt", "--noheadings", "--output", "SOURCE", "--target", mount).split("[", 1)[0]
     if not Path(source).is_block_device():

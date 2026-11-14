@@ -20,6 +20,16 @@ duo_firmware=(
     /usr/lib/firmware/qcom/sm7750/retroidpocket/duo/adsp_dtb.mbn
 )
 
+# SM7125 miatoll: DRM_MSM and the panel/touch drivers are built in and probe
+# before switch-root, so their firmware has to be in the initramfs. The modem
+# and ADSP blobs load later (QCOM_Q6V5_PAS=m) and stay on the rootfs only.
+miatoll_firmware=(
+    /usr/lib/firmware/qcom/sm7125/miatoll/a615_zap.mbn
+    /usr/lib/firmware/qcom/sm7125/miatoll/ipa_fws.mbn
+    /usr/lib/firmware/focaltech_ts_fw_huaxing.bin
+    /usr/lib/firmware/novatek_ts_tianma_fw.bin
+)
+
 dracut \
     --force \
     --no-hostonly \
@@ -28,7 +38,7 @@ dracut \
     --add ostree \
     --add armada-splash \
     --add armada-ostree-fallback \
-    --install "${duo_firmware[*]}" \
+    --install "${duo_firmware[*]} ${miatoll_firmware[*]}" \
     "${IMG}" "${KVER}"
 
 # dracut drops modules silently: fail the build rather than ship without.
@@ -45,6 +55,7 @@ required=(
     usr/lib/ostree/ostree-prepare-root
 )
 required+=( "${duo_firmware[@]#/}" )
+required+=( "${miatoll_firmware[@]#/}" )
 
 if ! lsinitrd "${IMG}" | awk '
     BEGIN {
