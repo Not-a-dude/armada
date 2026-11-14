@@ -92,7 +92,7 @@ jobs:
           if [ -z "${{ secrets.SIGNING_SECRET }}" ]; then
             # Forks have no release key; their builds are unsigned on purpose and
             # are only consumed by the fork owner's own devices.
-            if [ "${{ github.event.repository.fork }}" = "true" ]; then
+            if [ "${{ github.repository }}" != "armada-os/armada" ]; then
               echo "::warning::SIGNING_SECRET is not set — building an unsigned image in a fork."
             else
               echo "::error::SIGNING_SECRET is not set — refusing to publish an unsigned image (devices verify ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }})."
@@ -249,7 +249,7 @@ jobs:
               "${IMAGE_REF}"
           fi
 
-          if [ "${{ github.event.repository.fork }}" != "true" ]; then
+          if [ "${{ github.repository }}" == "armada-os/armada" ]; then
             cosign verify --key system_files/etc/pki/containers/armada.pub "${IMAGE_REF}"
             if [ "${IMAGE_FULL}" = "${ARMADA_LEGACY_IMAGE}" ]; then
               cosign verify --check-claims=false \
@@ -268,7 +268,7 @@ jobs:
       - name: Publish channel tags
         # Fork builds are unsigned, so they skip signing but still publish the
         # branch tag for the fork owner to test with.
-        if: env.HAVE_SIGNING_SECRET == 'true' || github.event.repository.fork == true
+        if: env.HAVE_SIGNING_SECRET == 'true' || github.repository != 'armada-os/armada'
         run: |
           set -euo pipefail
           IMAGE_FULL="${IMAGE_REGISTRY}/${IMAGE_NAME}"
@@ -299,7 +299,7 @@ jobs:
     if: >-
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging') &&
       needs.build_push.outputs.channel != '' &&
-      github.event.repository.fork == false
+      github.repository == 'armada-os/armada'
     permissions:
       contents: read
       packages: read
