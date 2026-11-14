@@ -90,8 +90,14 @@ jobs:
       - name: Check signing key
         run: |
           if [ -z "${{ secrets.SIGNING_SECRET }}" ]; then
-            echo "::error::SIGNING_SECRET is not set — refusing to publish an unsigned image (devices verify ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }})."
-            exit 1
+            # Forks have no release key; their builds are unsigned on purpose and
+            # are only consumed by the fork owner's own devices.
+            if [ "${{ github.event.repository.fork }}" = "true" ]; then
+              echo "::warning::SIGNING_SECRET is not set — building an unsigned image in a fork."
+            else
+              echo "::error::SIGNING_SECRET is not set — refusing to publish an unsigned image (devices verify ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }})."
+              exit 1
+            fi
           fi
 
       - name: Check out source
@@ -260,7 +266,9 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
 
       - name: Publish channel tags
-        if: env.HAVE_SIGNING_SECRET == 'true'
+        # Fork builds are unsigned, so they skip signing but still publish the
+        # branch tag for the fork owner to test with.
+        if: env.HAVE_SIGNING_SECRET == 'true' || github.event.repository.fork == true
         run: |
           set -euo pipefail
           IMAGE_FULL="${IMAGE_REGISTRY}/${IMAGE_NAME}"
