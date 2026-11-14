@@ -21,6 +21,9 @@ KCONFIG_OVERRIDES="${REPO_ROOT}/config/armada-kernel.config.overrides"
 HOST_ARCH=$(uname -m)
 JOBS=$(nproc)
 MAKE_ARGS=(-j"${JOBS}" LLVM=1 ARCH=arm64)
+# Build the host utilities (fixdep, dtc, resolve_btfids + libbpf/libsubcmd,
+# ...) with GCC/binutils. Only the target kernel uses clang/LLD.
+MAKE_ARGS+=(HOSTCC=gcc HOSTLD=ld HOSTAR=ar)
 
 # LLVM/Clang toolchain: clang + lld + llvm-{ar,nm,objcopy,objdump,readelf,strip}.
 for tool in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip; do
@@ -44,7 +47,7 @@ export KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST:-builder}"
 if command -v ccache >/dev/null 2>&1; then
     # Never shrink an existing cache; only raise/keep the configured limit.
     ccache --max-size="${CCACHE_MAXSIZE:-60G}" >/dev/null 2>&1 || true
-    MAKE_ARGS+=(CC="ccache clang" HOSTCC="ccache clang")
+    MAKE_ARGS+=(CC="ccache clang" HOSTCC="ccache gcc")
 fi
 
 # ---------- 1. Fetch upstream source ----------
