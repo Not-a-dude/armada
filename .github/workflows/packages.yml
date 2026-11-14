@@ -42,6 +42,11 @@ jobs:
           set -euo pipefail
           owner="${{ github.repository_owner }}"
           repo="ghcr.io/${owner,,}/armada/pkg"
+          # A fork starts with an empty package namespace. Packages it has not
+          # changed have the same content hash as upstream's, so reuse those
+          # instead of rebuilding (some pin source RPMs that are already gone
+          # from the mirrors).
+          upstream="ghcr.io/armada-os/armada/pkg"
           echo "${GH_TOKEN}" | skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
 
           matrix='[]'
@@ -61,6 +66,10 @@ jobs:
 
             if skopeo inspect --raw "docker://${ref}" >/dev/null 2>&1; then
               echo "::notice::${pkg} already built (${hash})"
+            elif [ "${repo}" != "${upstream}" ] && \
+                 skopeo inspect --raw "docker://${upstream}/${pkg}:${hash}" >/dev/null 2>&1; then
+              echo "::notice::${pkg} reused from ${upstream} (${hash})"
+              ref="${upstream}/${pkg}:${hash}"
             else
               echo "::notice::${pkg} needs building (${hash})"
               matrix="$(jq -c --arg p "${pkg}" --arg r "${runner}" --arg h "${hash}" \
