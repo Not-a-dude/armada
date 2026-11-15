@@ -12,7 +12,11 @@
 	model = "Xiaomi Redmi Note 9 Pro (Global, Huaxing)";
 };
 
-&panel { compatible = "huaxing,ft8756"; };
+&panel {
+	compatible = "huaxing,ft8756";
+	rotation = <90>;
+};
+
 &touchscreen {
 	compatible = "focaltech,ft8756-spi";
 	firmware-name = "focaltech_ts_fw_huaxing.bin";
