@@ -1,0 +1,88 @@
+From: Not-a-dude <honkhonkovic842@gmail.com>
+Subject: [PATCH] shaders: coalesce memory writes for 90 and 270 degree rotated composite
+
+On portrait panels rotated 90 or 270 degrees in Gamescope (such as smartphones
+and vertical tablets), imageStore writes were transposed across rows: adjacent
+threads within a subgroup wrote to identical X columns and consecutive Y rows
+(striding by full row stride, ~4KB). This caused 100% uncoalesced memory writes
+and saturated LPDDR bandwidth, leading to severe compositing latency (>24ms)
+and missed vblanks.
+
+Swap local invocation X and Y within the workgroup when (rotation & 1u) != 0,
+so adjacent threads in the wave write to contiguous X coordinates on the same
+row Y. Non-rotated (and 180-degree) displays remain bit-for-bit unchanged.
+---
+ src/shaders/composite.h                | 11 +++++++++++
+ src/shaders/cs_composite_blit.comp      |  2 +-
+ src/shaders/cs_composite_blur.comp      |  2 +-
+ src/shaders/cs_composite_blur_cond.comp |  2 +-
+ src/shaders/cs_composite_rcas_1px.comp  |  2 +-
+ 5 files changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/src/shaders/composite.h b/src/shaders/composite.h
+--- a/src/shaders/composite.h
++++ b/src/shaders/composite.h
+@@ -10,6 +10,17 @@ uvec2 outputLogicalSize(uint rotation) {
+     return (rotation & 1u) != 0u ? uvec2(size.y, size.x) : size;
+ }
+ 
++// When output is rotated by 90 or 270 degrees, swap local invocation X and Y within
++// the workgroup so adjacent subgroup threads write to contiguous destination columns (dst.x)
++// on the same row (dst.y), ensuring fully coalesced memory stores.
++// On non-rotated (or 180-degree) displays, preserve standard global invocation mapping.
++#define getLogicalInvocationCoord(rotation) \
++    (((rotation) & 1u) != 0u ? \
++        uvec2(gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.y, \
++              gl_WorkGroupID.y * gl_WorkGroupSize.y + gl_LocalInvocationID.x) : \
++        gl_GlobalInvocationID.xy)
++
+ ivec2 rotateOutputCoord(uvec2 coord, uint rotation) {
+     uvec2 size = imageSize(dst);
+     switch (rotation) {
+diff --git a/src/shaders/cs_composite_blit.comp b/src/shaders/cs_composite_blit.comp
+--- a/src/shaders/cs_composite_blit.comp
++++ b/src/shaders/cs_composite_blit.comp
+@@ -22,7 +22,7 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
+ }
+ 
+ void main() {
+-    uvec2 coord = uvec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
++    uvec2 coord = getLogicalInvocationCoord(u_rotation);
+     uvec2 outSize = outputLogicalSize(u_rotation);
+ 
+     if (coord.x >= outSize.x || coord.y >= outSize.y)
+diff --git a/src/shaders/cs_composite_blur.comp b/src/shaders/cs_composite_blur.comp
+--- a/src/shaders/cs_composite_blur.comp
++++ b/src/shaders/cs_composite_blur.comp
+@@ -25,7 +25,7 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
+ }
+ 
+ void main() {
+-    uvec2 coord = uvec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
++    uvec2 coord = getLogicalInvocationCoord(u_rotation);
+     uvec2 outSize = outputLogicalSize(u_rotation);
+ 
+     if (coord.x >= outSize.x || coord.y >= outSize.y)
+diff --git a/src/shaders/cs_composite_blur_cond.comp b/src/shaders/cs_composite_blur_cond.comp
+--- a/src/shaders/cs_composite_blur_cond.comp
++++ b/src/shaders/cs_composite_blur_cond.comp
+@@ -25,7 +25,7 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
+ }
+ 
+ void main() {
+-    uvec2 coord = uvec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
++    uvec2 coord = getLogicalInvocationCoord(u_rotation);
+     uvec2 outSize = outputLogicalSize(u_rotation);
+ 
+     if (coord.x >= outSize.x || coord.y >= outSize.y)
+diff --git a/src/shaders/cs_composite_rcas_1px.comp b/src/shaders/cs_composite_rcas_1px.comp
+--- a/src/shaders/cs_composite_rcas_1px.comp
++++ b/src/shaders/cs_composite_rcas_1px.comp
+@@ -107,5 +107,5 @@ void rcasComposite(uvec2 pos)
+ 
+ void main()
+ {
+-    rcasComposite(gl_GlobalInvocationID.xy);
++    rcasComposite(getLogicalInvocationCoord(u_rotation));
+ }
+-- 
