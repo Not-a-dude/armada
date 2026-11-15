@@ -17,7 +17,7 @@ index 0fdd99e..c4d63f5 100644
          }
  
 -        if (!driver.empty() && driver == module) {
-+        if ((module == "msm_dpu" || module == "msm_drm") && driver == "msm") {
++        if ((module == "msm_dpu" || module == "msm_drm" || module == "msm") && driver == "msm") {
              total++;
              SPDLOG_TRACE(
                  "driver = \"{}\", pdev = \"{}\", "
@@ -64,7 +64,7 @@ index 0fdd99e..c4d63f5 100644
      std::string hwmon;
  
 -    if (module == "msm")
-+    if (module == "msm_drm" || module == "msm_dpu" )
++    if (module == "msm_drm" || module == "msm_dpu" || module == "msm")
          hwmon = find_hwmon_sensor_dir("gpu");
      else if (module == "panfrost" || module == "panthor")
          hwmon = find_hwmon_sensor_dir("gpu_thermal");
@@ -72,7 +72,7 @@ index 0fdd99e..c4d63f5 100644
  {
      if (module == "panfrost" || module == "panthor")
          return get_gpu_clock_mali();
-+    else if (module == "msm_dpu")
++    else if (module == "msm_dpu" || module == "msm_drm" || module == "msm")
 +        return get_kgsl_clock();
  
      if (!gpu_clock_stream.is_open())
@@ -138,12 +138,10 @@ index 97e62e5..a5b1d9e 100644
  public:
      GPU_fdinfo(
 @@ -146,6 +147,7 @@ public:
-         } else if (module == "msm_dpu") {
+         } else if (module == "msm_dpu" || module == "msm_drm" || module == "msm") {
              // msm driver does not report vram usage
              drm_engine_type = "drm-engine-gpu";
 +            init_kgsl();
-         } else if (module == "msm_drm") {
-             init_kgsl();
          } else if (module == "panfrost") {
 -- 
 2.47.3

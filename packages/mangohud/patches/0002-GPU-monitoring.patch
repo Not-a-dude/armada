@@ -21,6 +21,7 @@ index c4d63f5..1586ed5 100644
 +    const std::vector<std::string> sys_paths = {
 +        "/sys/class/kgsl/kgsl-3d0",
 +        "/sys/class/devfreq/5900000.gpu", // SM6115
++        "/sys/class/devfreq/5000000.gpu", // SM7125/SM7150
 +        "/sys/class/devfreq/3d00000.gpu", // SM8250/SM8550/SM8650/SM8750
 +    };
 +
