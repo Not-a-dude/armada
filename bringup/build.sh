@@ -25,6 +25,9 @@ pkgs=(
     util-linux
     NetworkManager-wifi
     wpa_supplicant
+    qrtr
+    rmtfs
+    tqftpserv
 )
 
 dnf -y install --setopt=install_weak_deps=False "${pkgs[@]}"
@@ -80,6 +83,8 @@ dracut \
 # Debug hatch: SSH over the ECM function of the MTP gadget at 192.168.7.2.
 systemctl enable sshd.service
 systemctl enable armada-mtp.service
+systemctl enable rmtfs.service
+systemctl enable tqftpserv.service
 # bootc install is driven from the ESP by armada-efi-update; the stock unit
 # tries to run `bootctl` against a bootloader we never installed.
 systemctl mask bootloader-update.service

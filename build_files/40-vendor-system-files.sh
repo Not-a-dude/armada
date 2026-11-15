@@ -64,6 +64,8 @@ systemctl disable getty@tty1.service || true
 systemctl disable sshd.service || true
 systemctl disable armada-mtp.service || true
 systemctl enable sddm.service
+systemctl enable rmtfs.service
+systemctl enable tqftpserv.service
 systemctl enable armada-session-default.service
 systemctl enable seatd.service
 systemctl enable armada-input-calibration.service

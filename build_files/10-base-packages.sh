@@ -24,6 +24,11 @@ pkgs=(
     NetworkManager-wifi
     wpa_supplicant
 
+    # Qualcomm modem & Wi-Fi support
+    qrtr
+    rmtfs
+    tqftpserv
+
     # Hardware support
     dracut
     dracut-config-generic
