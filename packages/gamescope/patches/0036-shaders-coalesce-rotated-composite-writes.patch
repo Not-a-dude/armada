@@ -12,20 +12,15 @@ Swap local invocation X and Y within the workgroup when (rotation & 1u) != 0,
 so adjacent threads in the wave write to contiguous X coordinates on the same
 row Y. Non-rotated (and 180-degree) displays remain bit-for-bit unchanged.
 ---
- src/shaders/composite.h                | 11 +++++++++++
- src/shaders/cs_composite_blit.comp      |  2 +-
- src/shaders/cs_composite_blur.comp      |  2 +-
- src/shaders/cs_composite_blur_cond.comp |  2 +-
- src/shaders/cs_composite_rcas_1px.comp  |  2 +-
- 5 files changed, 15 insertions(+), 4 deletions(-)
-
 diff --git a/src/shaders/composite.h b/src/shaders/composite.h
+index 7f3645e..714501d 100644
 --- a/src/shaders/composite.h
 +++ b/src/shaders/composite.h
 @@ -10,6 +10,17 @@ uvec2 outputLogicalSize(uint rotation) {
      return (rotation & 1u) != 0u ? uvec2(size.y, size.x) : size;
  }
  
++
 +// When output is rotated by 90 or 270 degrees, swap local invocation X and Y within
 +// the workgroup so adjacent subgroup threads write to contiguous destination columns (dst.x)
 +// on the same row (dst.y), ensuring fully coalesced memory stores.
@@ -40,9 +35,10 @@ diff --git a/src/shaders/composite.h b/src/shaders/composite.h
      uvec2 size = imageSize(dst);
      switch (rotation) {
 diff --git a/src/shaders/cs_composite_blit.comp b/src/shaders/cs_composite_blit.comp
+index 4d974dc..47af042 100644
 --- a/src/shaders/cs_composite_blit.comp
 +++ b/src/shaders/cs_composite_blit.comp
-@@ -22,7 +22,7 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
+@@ -20,7 +20,7 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
  }
  
  void main() {
@@ -52,9 +48,10 @@ diff --git a/src/shaders/cs_composite_blit.comp b/src/shaders/cs_composite_blit.
  
      if (coord.x >= outSize.x || coord.y >= outSize.y)
 diff --git a/src/shaders/cs_composite_blur.comp b/src/shaders/cs_composite_blur.comp
+index 318b0e9..c0fbde2 100644
 --- a/src/shaders/cs_composite_blur.comp
 +++ b/src/shaders/cs_composite_blur.comp
-@@ -25,7 +25,7 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
+@@ -23,7 +23,7 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
  }
  
  void main() {
@@ -64,9 +61,10 @@ diff --git a/src/shaders/cs_composite_blur.comp b/src/shaders/cs_composite_blur.
  
      if (coord.x >= outSize.x || coord.y >= outSize.y)
 diff --git a/src/shaders/cs_composite_blur_cond.comp b/src/shaders/cs_composite_blur_cond.comp
+index 39b0405..d65efb5 100644
 --- a/src/shaders/cs_composite_blur_cond.comp
 +++ b/src/shaders/cs_composite_blur_cond.comp
-@@ -25,7 +25,7 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
+@@ -23,7 +23,7 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
  }
  
  void main() {
@@ -76,6 +74,7 @@ diff --git a/src/shaders/cs_composite_blur_cond.comp b/src/shaders/cs_composite_
  
      if (coord.x >= outSize.x || coord.y >= outSize.y)
 diff --git a/src/shaders/cs_composite_rcas_1px.comp b/src/shaders/cs_composite_rcas_1px.comp
+index 8d6deea..a5b28a2 100644
 --- a/src/shaders/cs_composite_rcas_1px.comp
 +++ b/src/shaders/cs_composite_rcas_1px.comp
 @@ -107,5 +107,5 @@ void rcasComposite(uvec2 pos)
@@ -85,4 +84,3 @@ diff --git a/src/shaders/cs_composite_rcas_1px.comp b/src/shaders/cs_composite_r
 -    rcasComposite(gl_GlobalInvocationID.xy);
 +    rcasComposite(getLogicalInvocationCoord(u_rotation));
  }
--- 

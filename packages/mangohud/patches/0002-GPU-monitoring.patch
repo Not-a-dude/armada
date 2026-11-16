@@ -11,7 +11,7 @@ diff --git a/src/gpu_fdinfo.cpp b/src/gpu_fdinfo.cpp
 index c4d63f5..1586ed5 100644
 --- a/src/gpu_fdinfo.cpp
 +++ b/src/gpu_fdinfo.cpp
-@@ -655,7 +665,18 @@ float GPU_fdinfo::amdgpu_helper_get_proc_vram() {
+@@ -655,7 +665,19 @@ float GPU_fdinfo::amdgpu_helper_get_proc_vram() {
  }
  
  void GPU_fdinfo::init_kgsl() {
