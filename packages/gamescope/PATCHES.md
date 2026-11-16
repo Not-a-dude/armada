@@ -76,4 +76,7 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 - `patches/0036-shaders-coalesce-rotated-composite-writes.patch`
   source: armada
 
+- `patches/0037-vulkan-raster-composite-for-blit-pass.patch`
+  source: armada
+
 
