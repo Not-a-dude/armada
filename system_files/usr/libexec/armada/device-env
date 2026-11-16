@@ -80,6 +80,12 @@ fi
 # BIG includes the prime cores; PRIME is the strict subset. Empty
 # ARMADA_IRQ_CORES means no IRQ restriction.
 case "${ARMADA_SOC_CLASS:-}" in
+    SM7125)
+        : "${ARMADA_LITTLE_CORES=0-5}"
+        : "${ARMADA_BIG_CORES=6-7}"
+        : "${ARMADA_PRIME_CORES=7}"
+        : "${ARMADA_IRQ_CORES=0-5}"
+        ;;
     SM7750)
         : "${ARMADA_LITTLE_CORES=0-2}"
         : "${ARMADA_BIG_CORES=3-7}"

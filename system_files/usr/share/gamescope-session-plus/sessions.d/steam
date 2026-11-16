@@ -117,6 +117,21 @@ export STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND=1
 # Enable horizontal mangoapp bar
 export STEAM_MANGOAPP_HORIZONTAL_SUPPORTED=1
 
+if [[ "${ARMADA_DEVICE_ID:-}" == "xiaomi-joyeuse" ]]; then
+    export XWAYLAND_COUNT=1
+    export STEAM_MULTIPLE_XWAYLANDS=0
+    export STEAM_USE_MANGOAPP=0
+    export STEAM_GAMESCOPE_COLOR_MANAGED=0
+    export STEAM_GAMESCOPE_VIRTUAL_WHITE=0
+    export STEAM_GAMESCOPE_HDR_SUPPORTED=0
+    export STEAM_GAMESCOPE_DYNAMIC_FPSLIMITER=0
+    export STEAM_GAMESCOPE_VRR_SUPPORTED=0
+    export mesa_glthread=false
+    export vk_xwayland_wait_ready=true
+    unset GAMESCOPE_DISABLE_ASYNC_FLIPS
+    unset GAMESCOPE_FORCE_VULKAN_REALTIME
+fi
+
 # Scaling support
 export STEAM_GAMESCOPE_FANCY_SCALING_SUPPORT=1
 
