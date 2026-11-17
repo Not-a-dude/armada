@@ -28,10 +28,18 @@ index 498bca6..15646ef 100644
  
  spirv_shaders = glsl_generator.process(shader_src)
 diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
-index 8d577e1..10ca0db 100644
+index 77134f2..a90c979 100644
 --- a/src/rendervulkan.cpp
 +++ b/src/rendervulkan.cpp
-@@ -53,6 +53,8 @@
+@@ -33,6 +33,7 @@
+ #include "wlr_end.hpp"
+ 
+ #include "rendervulkan.hpp"
++#include "ClientFormatPolicy.h"
+ #include "main.hpp"
+ #include "steamcompmgr.hpp"
+ #include "log.hpp"
+@@ -52,6 +53,8 @@
  #include "cs_nis_hdr_linear_fp16.h"
  #include "cs_rgb_to_nv12.h"
  #include "cs_sgsr.h"
@@ -40,7 +48,16 @@ index 8d577e1..10ca0db 100644
  
  #define A_CPU
  #include "shaders/ffx_a.h"
-@@ -335,6 +337,15 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
+@@ -61,6 +64,8 @@
+ 
+ extern bool g_bWasPartialComposite;
+ extern bool g_bAllowDeferredBackend;
++extern bool g_bExposeClientSampleableFormats;
++extern bool g_bForceVulkanRealtime;
+ 
+ static constexpr mat3x4 g_rgb2yuv_srgb_to_bt601_limited = {{
+   { 0.257f, 0.504f, 0.098f, 0.0625f },
+@@ -332,6 +337,15 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
  
  extern bool env_to_bool(const char *env);
  
@@ -56,7 +73,51 @@ index 8d577e1..10ca0db 100644
  bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
  {
  	uint32_t deviceCount = 0;
-@@ -810,44 +821,44 @@ bool CVulkanDevice::createLayouts()
+@@ -541,6 +555,9 @@ bool CVulkanDevice::createDevice()
+ 	}
+ 
+ 	float queuePriorities = 1.0f;
++	const bool useRealtimeVulkanQueue = gamescope::Process::HasCapSysNice() || g_bForceVulkanRealtime || env_to_bool( getenv( "GAMESCOPE_FORCE_VULKAN_REALTIME" ) );
++	if ( useRealtimeVulkanQueue )
++		vk_log.infof( "requesting realtime-priority Vulkan queues" );
+ 
+ 	VkDeviceQueueGlobalPriorityCreateInfoEXT queueCreateInfoEXT = {
+ 		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO_EXT,
+@@ -552,14 +569,14 @@ bool CVulkanDevice::createDevice()
+ 	{
+ 		{
+ 			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+-			.pNext = gamescope::Process::HasCapSysNice() ? &queueCreateInfoEXT : nullptr,
++			.pNext = useRealtimeVulkanQueue ? &queueCreateInfoEXT : nullptr,
+ 			.queueFamilyIndex = m_queueFamily,
+ 			.queueCount = 1,
+ 			.pQueuePriorities = &queuePriorities
+ 		},
+ 		{
+ 			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+-			.pNext = gamescope::Process::HasCapSysNice() ? &queueCreateInfoEXT : nullptr,
++			.pNext = useRealtimeVulkanQueue ? &queueCreateInfoEXT : nullptr,
+ 			.queueFamilyIndex = m_generalQueueFamily,
+ 			.queueCount = 1,
+ 			.pQueuePriorities = &queuePriorities
+@@ -686,14 +703,14 @@ bool CVulkanDevice::createDevice()
+ 	};
+ 
+ 	VkResult res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
+-	if ( res == VK_ERROR_NOT_PERMITTED_KHR && gamescope::Process::HasCapSysNice() )
++	if ( res == VK_ERROR_NOT_PERMITTED_KHR && useRealtimeVulkanQueue )
+ 	{
+ 		fprintf(stderr, "vkCreateDevice failed with a high-priority queue (general + compute). Falling back to regular priority (general).\n");
+ 		queueCreateInfos[1].pNext = nullptr;
+ 		res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
+ 
+ 
+-		if ( res == VK_ERROR_NOT_PERMITTED_KHR && gamescope::Process::HasCapSysNice() )
++		if ( res == VK_ERROR_NOT_PERMITTED_KHR && useRealtimeVulkanQueue )
+ 		{
+ 			fprintf(stderr, "vkCreateDevice failed with a high-priority queue (compute). Falling back to regular priority (all).\n");
+ 			queueCreateInfos[0].pNext = nullptr;
+@@ -804,44 +821,44 @@ bool CVulkanDevice::createLayouts()
  			.binding = 0,
  			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
  			.descriptorCount = 1,
@@ -108,7 +169,7 @@ index 8d577e1..10ca0db 100644
  		},
  	};
  
-@@ -997,6 +1008,8 @@ bool CVulkanDevice::createShaders()
+@@ -991,6 +1008,8 @@ bool CVulkanDevice::createShaders()
  	}
  	SHADER(RGB_TO_NV12, cs_rgb_to_nv12);
  	SHADER(SGSR, cs_sgsr);
@@ -117,7 +178,7 @@ index 8d577e1..10ca0db 100644
  #undef SHADER
  
  	for (uint32_t i = 0; i < shaderInfos.size(); i++)
-@@ -1123,7 +1136,7 @@ VkSampler CVulkanDevice::sampler( SamplerState key )
+@@ -1117,7 +1136,7 @@ VkSampler CVulkanDevice::sampler( SamplerState key )
  	return ret;
  }
  
@@ -126,7 +187,7 @@ index 8d577e1..10ca0db 100644
  {
  	const std::array<VkSpecializationMapEntry, 7> specializationEntries = {{
  		{
-@@ -1190,6 +1203,105 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
+@@ -1184,6 +1203,105 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
  		.pData		   = &specializationData,
  	};
  
@@ -232,7 +293,7 @@ index 8d577e1..10ca0db 100644
  	VkComputePipelineCreateInfo computePipelineCreateInfo = {
  		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
  		.stage = {
-@@ -1229,6 +1341,8 @@ void CVulkanDevice::compileAllPipelines(std::stop_token st)
+@@ -1223,6 +1341,8 @@ void CVulkanDevice::compileAllPipelines(std::stop_token st)
  	SHADER(NIS_HDR_LINEAR, 1, 1, 1);
  	SHADER(RGB_TO_NV12, 1, 1, 1);
  	SHADER(SGSR, 1, 1, 1);
@@ -241,7 +302,7 @@ index 8d577e1..10ca0db 100644
  #undef SHADER
  
  	for (auto& info : pipelineInfos) {
-@@ -1257,18 +1371,18 @@ void CVulkanDevice::compileAllPipelines(std::stop_token st)
+@@ -1251,18 +1371,18 @@ void CVulkanDevice::compileAllPipelines(std::stop_token st)
  
  extern bool g_bSteamIsActiveWindow;
  
@@ -263,7 +324,7 @@ index 8d577e1..10ca0db 100644
  		m_pipelineMap[key] = result;
  		return result;
  	}
-@@ -1714,7 +1828,12 @@ void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
+@@ -1708,7 +1828,12 @@ void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
  	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
  }
  
@@ -277,7 +338,7 @@ index 8d577e1..10ca0db 100644
  {
  	for (auto src : m_boundTextures)
  	{
-@@ -1861,13 +1980,60 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+@@ -1855,13 +1980,60 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
  
  	m_device->vk.UpdateDescriptorSets(m_device->device(), writeDescriptorSets.size(), writeDescriptorSets.data(), 0, nullptr);
  
@@ -339,7 +400,7 @@ index 8d577e1..10ca0db 100644
  void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst)
  {
  	assert(src->width() == dst->width());
-@@ -2012,8 +2178,8 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
+@@ -2006,8 +2178,8 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
  		if (!state.discarded && !state.dirty && !state.needsImport && !isExport && !isPresent)
  			continue;
  
@@ -350,7 +411,7 @@ index 8d577e1..10ca0db 100644
  
  		if (image->queueFamily == VK_QUEUE_FAMILY_IGNORED)
  			image->queueFamily = m_queueFamily;
-@@ -2356,6 +2522,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
+@@ -2350,6 +2522,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
  	}
  
  	m_bTransferSrc = flags.bTransferSrc;
@@ -358,16 +419,74 @@ index 8d577e1..10ca0db 100644
  
  	if ( flags.bFlippable == true && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
  	{
-@@ -3466,6 +3633,8 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+@@ -3000,11 +3173,16 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
+ 				continue;
+ 			}
+ 
+-			// The deferred backend exposes all sample-able formats as supported modifiers.
+-			if ( !g_bAllowDeferredBackend )
++			const bool bBackendUsesModifiers = GetBackend()->UsesModifiers();
++			const bool bBackendSupportsModifier = !bBackendUsesModifiers ||
++				gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( drmFormat ), modifier );
++			if ( !gamescope::ShouldAdvertiseSampleableClientModifier(
++				g_bAllowDeferredBackend,
++				g_bExposeClientSampleableFormats,
++				bBackendUsesModifiers,
++				bBackendSupportsModifier ) )
+ 			{
+-				if ( GetBackend()->UsesModifiers() && !gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( drmFormat ), modifier ) )
+-					continue;
++				continue;
+ 			}
+ 
+ 			wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
+@@ -3016,8 +3194,17 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
+ 	}
+ 	else
+ 	{
+-		if ( GetBackend()->UsesModifiers() && !GetBackend()->SupportsInvalidModifier( drmFormat ) )
++		const bool bBackendUsesModifiers = GetBackend()->UsesModifiers();
++		const bool bBackendSupportsInvalidModifier = !bBackendUsesModifiers ||
++			GetBackend()->SupportsInvalidModifier( drmFormat );
++		if ( !gamescope::ShouldAdvertiseSampleableClientModifier(
++			g_bAllowDeferredBackend,
++			g_bExposeClientSampleableFormats,
++			bBackendUsesModifiers,
++			bBackendSupportsInvalidModifier ) )
++		{
+ 			return false;
++		}
+ 
+ 		wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, DRM_FORMAT_MOD_INVALID );
+ 		return false;
+@@ -3026,6 +3213,16 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
+ 
+ bool vulkan_init_formats()
+ {
++	if ( env_to_bool( getenv( "GAMESCOPE_EXPOSE_CLIENT_SAMPLEABLE_FORMATS" ) ) )
++	{
++		g_bExposeClientSampleableFormats = true;
++	}
++
++	if ( g_bExposeClientSampleableFormats )
++	{
++		vk_log.infof( "exposing Vulkan-sampleable client DMA-BUF formats without the output scanout intersection" );
++	}
++
+ 	for ( size_t i = 0; s_DRMVKFormatTable[i].DRMFormat != DRM_FORMAT_INVALID; i++ )
+ 	{
+ 		if (s_DRMVKFormatTable[i].internal)
+@@ -3435,6 +3632,9 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
+ 	outputImageflags.bStorage = true;
  	outputImageflags.bTransferSrc = true; // for screenshots
  	outputImageflags.bSampled = true; // for pipewire blits
- 	outputImageflags.bLinear = env_to_bool( getenv( "GAMESCOPE_FORCE_LINEAR_OUTPUT" ) );
++	outputImageflags.bLinear = env_to_bool( getenv( "GAMESCOPE_FORCE_LINEAR_OUTPUT" ) );
 +	// Also usable as a colour attachment so composition can go through the raster pipeline.
 +	outputImageflags.bColorAttachment = vulkan_raster_composite_enabled();
  	outputImageflags.bOutputImage = true;
  
  	pOutput->outputImages.resize(3); // extra image for partial composition.
-@@ -3961,11 +4130,17 @@ struct BlitPushData_t
+@@ -3930,11 +4130,20 @@ struct BlitPushData_t
  
  	uint32_t u_rotation;
  
@@ -376,45 +495,83 @@ index 8d577e1..10ca0db 100644
 +	uint32_t u_outputWidth;
 +	uint32_t u_outputHeight;
 +
-+	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo, uint32_t rotation = 0, uint32_t outputWidth = 0, uint32_t outputHeight = 0)
++	uint32_t u_hoistColorMgmt;
++
++	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo, uint32_t rotation = 0, uint32_t outputWidth = 0, uint32_t outputHeight = 0, uint32_t hoistColorMgmt = 0)
  	{
  		u_shaderFilter = 0;
  		u_alphaMode = 0;
  		u_rotation = rotation;
 +		u_outputWidth = outputWidth;
 +		u_outputHeight = outputHeight;
++		u_hoistColorMgmt = hoistColorMgmt;
  
  		for (int i = 0; i < frameInfo->layers.count(); i++) {
  			const FrameInfo_t::Layer_t *layer = &frameInfo->layers.get( i );
-@@ -4013,6 +4188,8 @@ struct BlitPushData_t
+@@ -3982,6 +4191,9 @@ struct BlitPushData_t
          u_shaderFilter = (uint32_t)GamescopeUpscaleFilter::LINEAR;
  		u_alphaMode = 0;
  		u_rotation = 0;
 +		u_outputWidth = 0;
 +		u_outputHeight = 0;
++		u_hoistColorMgmt = 0;
  		ctm[0] = glm::mat3x4
  		{
  			1, 0, 0, 0,
-@@ -4644,6 +4821,17 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+@@ -4613,8 +4825,51 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
  
  		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
  	}
 +	else if ( vulkan_raster_composite_enabled() && compositeImage->colorAttachment() && !compositeImage->isYcbcr() && g_uCompositeDebug == 0 )
 +	{
 +		// Debug markers imageStore into the target, so they stay on the compute path.
++		{
++			static int nDiag = 0;
++			if ( ++nDiag % 40 == 1 )
++				fprintf( stderr, "[diag-raster] layers=%zu ycbcr=%u debug=%u lut0=%d lut3d0=%d out=%dx%d\n",
++					frameInfo->layers.count(), frameInfo->ycbcrMask(), g_uCompositeDebug,
++					frameInfo->shaperLut[EOTF_Gamma22] != nullptr, frameInfo->lut3D[EOTF_Gamma22] != nullptr,
++					compositeImage->width(), compositeImage->height() );
++		}
 +		const VkFormat eAttachmentFormat = DRMFormatToVulkan( compositeImage->drmFormat(), false );
 +		cmdBuffer->bindGraphicsPipeline( g_device.pipeline(SHADER_TYPE_BLIT_FS, frameInfo->layers.count(), frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF, false, eAttachmentFormat ));
 +		bind_all_layers(cmdBuffer.get(), frameInfo);
 +		cmdBuffer->bindTarget(compositeImage);
-+		cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo, uOutputRotation, compositeImage->width(), compositeImage->height());
++		// Every SDR layer shares one color chain, so running it post-blend is
++		// equivalent (the same assumption the DPU output LUTs make) and much
++		// cheaper than evaluating the shaper and 3D LUT per layer.
++		bool bHoistColorMgmt = frameInfo->applyOutputColorMgmt && frameInfo->outputEncodingEOTF == EOTF_Gamma22 &&
++			frameInfo->layers.count() > 0;
++		if ( bHoistColorMgmt )
++		{
++			const GamescopeAppTextureColorspace eCS = frameInfo->layers.get( 0 ).colorspace;
++			if ( eCS != GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB && eCS != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR )
++				bHoistColorMgmt = false;
++			for ( int i = 0; i < frameInfo->layers.count() && bHoistColorMgmt; i++ )
++			{
++				const FrameInfo_t::Layer_t &layer = frameInfo->layers.get( i );
++				if ( !layer.applyColorMgmt || layer.colorspace != eCS )
++					bHoistColorMgmt = false;
++			}
++		}
++		cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo, uOutputRotation, compositeImage->width(), compositeImage->height(), bHoistColorMgmt ? 1u : 0u);
 +
 +		cmdBuffer->drawFullscreen();
 +	}
  	else
  	{
++		{
++			static int nDiagC = 0;
++			if ( ++nDiagC % 40 == 1 )
++				fprintf( stderr, "[diag-compute] layers=%zu debug=%u lut0=%d out=%dx%d\n",
++					frameInfo->layers.count(), g_uCompositeDebug,
++					frameInfo->shaperLut[EOTF_Gamma22] != nullptr, compositeImage->width(), compositeImage->height() );
++		}
  		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layers.count(), frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF ));
+ 		bind_all_layers(cmdBuffer.get(), frameInfo);
+ 		cmdBuffer->bindTarget(compositeImage);
 diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
-index 9ab5054..f9f10a4 100644
+index 3566b3f..411c8c4 100644
 --- a/src/rendervulkan.hpp
 +++ b/src/rendervulkan.hpp
 @@ -188,6 +188,7 @@ public:
@@ -433,7 +590,61 @@ index 9ab5054..f9f10a4 100644
  
  	uint32_t m_drmFormat = DRM_FORMAT_INVALID;
  
-@@ -629,6 +631,9 @@ enum ShaderType {
+@@ -305,6 +307,9 @@ struct FrameInfo_t
+ 	bool bRepeatFrame;
+ 	bool applyOutputColorMgmt; // drm only
+ 	EOTF outputEncodingEOTF;
++	// The SDR shaper + 3D LUT are left to the output (msm DPU): set only when every
++	// layer is SDR and the shader skips its gamma 2.2 LUTs.
++	bool outputLuts;
+ 
+ 	// Maps output space onto the focused window's own space for absolute input.
+ 	// Not the base layer's transform, whose texture may already be upscaled.
+@@ -515,6 +520,7 @@ struct gamescope_color_mgmt_t
+ 
+ 	// HDR Display Metadata Override & Tonemapping
+ 	ETonemapOperator hdrTonemapOperator = ETonemapOperator_None;
++	bool bHdrTonemapOperatorSet = false;
+ 	tonemap_info_t hdrTonemapDisplayMetadata = { 0 };
+ 	tonemap_info_t hdrTonemapSourceMetadata = { 0 };
+ 
+@@ -546,6 +552,7 @@ struct gamescope_color_mgmt_luts
+ {
+ 	bool bHasLut3D = false;
+ 	bool bHasLut1D = false;
++	bool bIdentityLuts = false;
+ 	uint16_t lut3d[s_nLutEdgeSize3d*s_nLutEdgeSize3d*s_nLutEdgeSize3d*4];
+ 	uint16_t lut1d[s_nLutSize1d*4];
+ 
+@@ -557,10 +564,19 @@ struct gamescope_color_mgmt_luts
+ 		return bHasLut3D && bHasLut1D;
+ 	}
+ 
++	// The chain shaper TF -> 1D LUT -> 3D LUT -> blend TF is the identity for
++	// the default SDR state. Binding nothing then lets the composite shader
++	// drop the whole chain, which costs several ms per layer on some GPUs.
++	bool HasColorTransform() const
++	{
++		return HasLuts() && !bIdentityLuts;
++	}
++
+ 	void shutdown()
+ 	{
+ 		bHasLut1D = false;
+ 		bHasLut3D = false;
++		bIdentityLuts = false;
+ 		vk_lut1d = nullptr;
+ 		vk_lut3d = nullptr;
+ 	}
+@@ -569,6 +585,7 @@ struct gamescope_color_mgmt_luts
+ 	{
+ 		bHasLut1D = false;
+ 		bHasLut3D = false;
++		bIdentityLuts = false;
+ 	}
+ };
+ 
+@@ -625,6 +642,9 @@ enum ShaderType {
  	SHADER_TYPE_NIS_HDR_LINEAR,
  	SHADER_TYPE_RGB_TO_NV12,
  	SHADER_TYPE_SGSR,
@@ -443,7 +654,7 @@ index 9ab5054..f9f10a4 100644
  
  	SHADER_TYPE_COUNT
  };
-@@ -679,6 +684,9 @@ struct PipelineInfo_t
+@@ -675,6 +695,9 @@ struct PipelineInfo_t
  	uint32_t outputEOTF;
  	bool itmEnable;
  
@@ -453,7 +664,7 @@ index 9ab5054..f9f10a4 100644
  	bool operator==(const PipelineInfo_t& o) const {
  		return
  		shaderType == o.shaderType &&
-@@ -688,7 +696,8 @@ struct PipelineInfo_t
+@@ -684,7 +707,8 @@ struct PipelineInfo_t
  		compositeDebug == o.compositeDebug &&
  		colorspaceMask == o.colorspaceMask &&
  		outputEOTF == o.outputEOTF &&
@@ -463,7 +674,7 @@ index 9ab5054..f9f10a4 100644
  	}
  };
  
-@@ -712,6 +721,7 @@ namespace std
+@@ -708,6 +732,7 @@ namespace std
  			hash = hash_combine(hash, k.colorspaceMask);
  			hash = hash_combine(hash, k.outputEOTF);
  			hash = hash_combine(hash, k.itmEnable);
@@ -471,7 +682,7 @@ index 9ab5054..f9f10a4 100644
  			return hash;
  		}
  	};
-@@ -760,6 +770,8 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
+@@ -756,6 +781,8 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
  	VK_FUNC(CmdPipelineBarrier) \
  	VK_FUNC(CmdPushConstants) \
  	VK_FUNC(CmdResetQueryPool) \
@@ -480,7 +691,7 @@ index 9ab5054..f9f10a4 100644
  	VK_FUNC(CmdWriteTimestamp) \
  	VK_FUNC(CreateBuffer) \
  	VK_FUNC(CreateCommandPool) \
-@@ -844,7 +856,7 @@ public:
+@@ -840,7 +867,7 @@ public:
  	bool BInit(VkInstance instance, VkSurfaceKHR surface);
  
  	VkSampler sampler(SamplerState key);
@@ -489,7 +700,7 @@ index 9ab5054..f9f10a4 100644
  	int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeBits );
  	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
  	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
-@@ -915,7 +927,7 @@ protected:
+@@ -911,7 +938,7 @@ protected:
  	bool createPools();
  	bool createShaders();
  	bool createScratchResources();
@@ -498,7 +709,7 @@ index 9ab5054..f9f10a4 100644
  	void compileAllPipelines(std::stop_token st);
  
  	VkDevice m_device = nullptr;
-@@ -1017,7 +1029,10 @@ public:
+@@ -1013,7 +1040,10 @@ public:
  	template<class PushData, class... Args>
  	void uploadConstants(Args&&... args);
  	void bindPipeline(VkPipeline pipeline);
@@ -509,7 +720,7 @@ index 9ab5054..f9f10a4 100644
  	void copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst);
  	void copyImageRegions(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst, std::span<const VkImageCopy> regions);
  	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst);
-@@ -1044,6 +1059,9 @@ public:
+@@ -1040,6 +1070,9 @@ public:
  	const std::vector<uint32_t> &GetUsedDescriptorSets() const { return m_usedDescriptorSets; }
  
  private:
@@ -520,24 +731,99 @@ index 9ab5054..f9f10a4 100644
  	CVulkanDevice *m_device;
  
 diff --git a/src/shaders/blit_push_data.h b/src/shaders/blit_push_data.h
-index f81096b..c12eb35 100644
+index f81096b..2041ff5 100644
 --- a/src/shaders/blit_push_data.h
 +++ b/src/shaders/blit_push_data.h
-@@ -18,5 +18,8 @@ uniform layers_t {
+@@ -18,5 +18,11 @@ uniform layers_t {
      float u_itmTargetNits;
  
      uint u_rotation;
 +
 +    // Physical output size in pixels; only the raster composite path reads it.
 +    uvec2 u_outputSize;
++
++    // Non-zero: apply the SDR color chain once after blending, not per layer.
++    uint u_hoistColorMgmt;
  };
  
+diff --git a/src/shaders/composite.h b/src/shaders/composite.h
+index 7f3645e..bcdb565 100644
+--- a/src/shaders/composite.h
++++ b/src/shaders/composite.h
+@@ -10,6 +10,17 @@ uvec2 outputLogicalSize(uint rotation) {
+     return (rotation & 1u) != 0u ? uvec2(size.y, size.x) : size;
+ }
+ 
++
++// When output is rotated by 90 or 270 degrees, swap local invocation X and Y within
++// the workgroup so adjacent subgroup threads write to contiguous destination columns (dst.x)
++// on the same row (dst.y), ensuring fully coalesced memory stores.
++// On non-rotated (or 180-degree) displays, preserve standard global invocation mapping.
++#define getLogicalInvocationCoord(rotation) \
++    (((rotation) & 1u) != 0u ? \
++        uvec2(gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.y, \
++              gl_WorkGroupID.y * gl_WorkGroupSize.y + gl_LocalInvocationID.x) : \
++        gl_GlobalInvocationID.xy)
++
+ ivec2 rotateOutputCoord(uvec2 coord, uint rotation) {
+     uvec2 size = imageSize(dst);
+     switch (rotation) {
+@@ -179,7 +190,7 @@ vec4 sampleBilinear(sampler2D tex, vec2 coord, uint colorspace, bool unnormalize
+     return mix(temp1, temp0, filterWeight.y);
+ }
+ 
+-vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceLayerIdx, vec2 uv, bool unnormalized) {
++vec4 sampleLayerExImpl(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceLayerIdx, vec2 uv, bool unnormalized, bool bApplyColorMgmt) {
+     vec2 coord = ((uv + u_offset[offsetLayerIdx]) * u_scale[offsetLayerIdx]);
+     vec2 texSize = textureSize(layerSampler, 0);
+ 
+@@ -211,13 +222,22 @@ vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceL
+     }
+     // JoshA: AMDGPU applies 3x4 CTM like this, where A is 1.0, but it only affects .rgb.
+     color.rgb = vec4(color.rgb, 1.0f) * u_ctm[colorspaceLayerIdx];
+-    color.rgb = apply_layer_color_mgmt(color.rgb, offsetLayerIdx, colorspace);
++    if (bApplyColorMgmt)
++        color.rgb = apply_layer_color_mgmt(color.rgb, offsetLayerIdx, colorspace);
+ 
+     return color;
+ }
+ 
++vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceLayerIdx, vec2 uv, bool unnormalized) {
++    return sampleLayerExImpl(layerSampler, offsetLayerIdx, colorspaceLayerIdx, uv, unnormalized, true);
++}
++
++vec4 sampleLayerExNoColorMgmt(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceLayerIdx, vec2 uv, bool unnormalized) {
++    return sampleLayerExImpl(layerSampler, offsetLayerIdx, colorspaceLayerIdx, uv, unnormalized, false);
++}
++
+ vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormalized) {
+-    return sampleLayerEx(layerSampler, layerIdx, layerIdx, uv, unnormalized);
++    return sampleLayerExImpl(layerSampler, layerIdx, layerIdx, uv, unnormalized, true);
+ }
+ 
+ vec3 encodeOutputColor(vec3 value) {
+
+diff --git a/src/shaders/vs_composite_blit.vert b/src/shaders/vs_composite_blit.vert
+new file mode 100644
+--- /dev/null
++++ b/src/shaders/vs_composite_blit.vert
+@@ -0,0 +1,10 @@
++#version 450
++
++// Fullscreen triangle for the raster composite path. No vertex buffers: the
++// position comes from gl_VertexIndex and the fragment shader derives all of
++// its coordinates from gl_FragCoord.
++void main()
++{
++    vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));
++    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
++}
+
 diff --git a/src/shaders/fs_composite_blit.frag b/src/shaders/fs_composite_blit.frag
 new file mode 100644
-index 0000000..244fe61
 --- /dev/null
 +++ b/src/shaders/fs_composite_blit.frag
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,53 @@
 +#version 450
 +
 +#extension GL_GOOGLE_include_directive : require
@@ -556,6 +842,12 @@ index 0000000..244fe61
 +    return sampleLayer(s_samplers[layerIdx], layerIdx, uv, true);
 +}
 +
++vec4 sampleLayerNoColorMgmt(uint layerIdx, vec2 uv) {
++    if ((c_ycbcrMask & (1 << layerIdx)) != 0)
++        return sampleLayerExNoColorMgmt(s_ycbcr_samplers[layerIdx], layerIdx, layerIdx, uv, false);
++    return sampleLayerExNoColorMgmt(s_samplers[layerIdx], layerIdx, layerIdx, uv, true);
++}
++
 +// Inverse of rotateOutputCoord(): maps a physical (scanout) pixel back to the
 +// logical pixel that the compute path would have stored there.
 +uvec2 unrotateOutputCoord(uvec2 p, uint rotation) {
@@ -569,40 +861,19 @@ index 0000000..244fe61
 +}
 +
 +void main() {
-+    // Same logical coordinate the compute shader used for this output pixel.
 +    uvec2 coord = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
-+
 +    vec2 uv = vec2(coord);
 +    vec4 outputValue = vec4(0.0f);
 +
-+    if (checkDebugFlag(compositedebug_PlaneBorders))
-+        outputValue = vec4(1.0f, 0.0f, 0.0f, 0.0f);
-+
-+    if (c_layerCount > 0) {
-+        outputValue = sampleLayer(0, uv) * u_opacity[0];
-+    }
++    if (c_layerCount > 0)
++        outputValue = sampleLayerNoColorMgmt(0, uv) * u_opacity[0];
 +
 +    for (int i = 1; i < c_layerCount; i++) {
-+        vec4 layerColor = sampleLayer(i, uv);
++        vec4 layerColor = sampleLayerNoColorMgmt(i, uv);
 +        outputValue = BlendLayer( i, outputValue, layerColor, u_opacity[i] );
 +    }
 +
++    outputValue.rgb = apply_layer_color_mgmt(outputValue.rgb, 0u, get_layer_colorspace(0));
 +    outputValue.rgb = encodeOutputColor(outputValue.rgb);
 +    outColor = outputValue;
-+}
-diff --git a/src/shaders/vs_composite_blit.vert b/src/shaders/vs_composite_blit.vert
-new file mode 100644
-index 0000000..9b65080
---- /dev/null
-+++ b/src/shaders/vs_composite_blit.vert
-@@ -0,0 +1,10 @@
-+#version 450
-+
-+// Fullscreen triangle for the raster composite path. No vertex buffers: the
-+// position comes from gl_VertexIndex and the fragment shader derives all of
-+// its coordinates from gl_FragCoord.
-+void main()
-+{
-+    vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));
-+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 +}
