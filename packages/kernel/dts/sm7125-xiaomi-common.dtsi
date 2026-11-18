@@ -917,5 +917,5 @@
 
 &venus {
 	firmware-name = "qcom/sm7125/miatoll/venus.mbn";
-	status = "disabled";
+	status = "okay";
 };
