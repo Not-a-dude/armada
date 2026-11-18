@@ -78,5 +78,8 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
 
 - `patches/0037-vulkan-raster-composite-for-blit-pass.patch`
   source: armada
+  notes: Also hoists the SDR shaper + 3D LUT out of per-layer sampling: when all
+  layers share one SRGB/LINEAR colourspace the chain runs once post-blend,
+  and identity LUTs are left unbound.
 
 
