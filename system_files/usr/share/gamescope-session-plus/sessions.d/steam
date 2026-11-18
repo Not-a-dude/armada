@@ -117,15 +117,6 @@ export STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND=1
 # Enable horizontal mangoapp bar
 export STEAM_MANGOAPP_HORIZONTAL_SUPPORTED=1
 
-if [[ "${ARMADA_DEVICE_ID:-}" == "xiaomi-joyeuse" ]]; then
-    export STEAM_MULTIPLE_XWAYLANDS=0
-    export STEAM_GAMESCOPE_COLOR_MANAGED=0
-    export STEAM_GAMESCOPE_VIRTUAL_WHITE=0
-    export STEAM_GAMESCOPE_HDR_SUPPORTED=0
-    export STEAM_GAMESCOPE_DYNAMIC_FPSLIMITER=0
-    export STEAM_GAMESCOPE_VRR_SUPPORTED=0
-fi
-
 # Scaling support
 export STEAM_GAMESCOPE_FANCY_SCALING_SUPPORT=1
 
@@ -146,6 +137,13 @@ export CURSOR_FILE="${HOME}/.local/share/Steam/tenfoot/resource/images/cursors/a
 
 export XCURSOR_THEME=steam
 export XCURSOR_SCALE=256
+
+if [[ "${ARMADA_DEVICE_ID:-}" == "xiaomi-joyeuse" ]]; then
+    export STEAM_GAMESCOPE_HDR_SUPPORTED=0
+    export STEAM_GAMESCOPE_DYNAMIC_FPSLIMITER=0
+    export STEAM_GAMESCOPE_VRR_SUPPORTED=0
+    export GAMESCOPE_COMPOSITE_RASTER=1
+fi
 
 if command -v kwriteconfig6 >/dev/null; then
   # Chromium (and therefore Steam) ignore XCursor and use only the GTK config
