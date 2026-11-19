@@ -425,7 +425,7 @@ at all, which lets the composite shader drop the whole chain.
 +			frameInfo->shaperLut[EOTF_Gamma22] == nullptr &&
 +			frameInfo->lut3D[EOTF_Gamma22] == nullptr &&
 +			frameInfo->ycbcrMask() == 0;
-+		const uint32_t fsType = bCanUseFastFs ? SHADER_TYPE_BLIT_FAST_FS : SHADER_TYPE_BLIT_FS;
++		const ShaderType fsType = bCanUseFastFs ? SHADER_TYPE_BLIT_FAST_FS : SHADER_TYPE_BLIT_FS;
 +		cmdBuffer->bindGraphicsPipeline( g_device.pipeline(fsType, frameInfo->layers.count(), frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF, false, eAttachmentFormat ));
 +		bind_all_layers(cmdBuffer.get(), frameInfo);
 +		cmdBuffer->bindTarget(compositeImage);
