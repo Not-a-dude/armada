@@ -579,7 +579,7 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
 - `patches/0011-qcom-pm8150b-charger.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8250/patches/linux/0011-qcom-pm8150b-charger.patch
   upstream: unknown
-  notes: Armada refreshed only the Makefile context for Linux 7.2's expanded Surface power-supply entries; charger and fuel-gauge behavior is unchanged.
+  notes: Armada refreshed the Makefile context for Linux 7.2 and extends SMB5 for the PM6150 direct-charge path used by Xiaomi miatoll devices.
 - `patches/0005-sm8250-uart.patch`
   source: https://github.com/ROCKNIX/distribution/blob/bcf3b5bc574990b96543484575b06f912153a715/projects/ROCKNIX/devices/SM8250/patches/linux/0005-sm8250-uart.patch
   upstream: unknown
@@ -1341,3 +1341,8 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: local import from the SM7125 6.14.7 tree
   upstream: unknown
   notes: Restores the PM6150 qgauge, SPMI SDAM NVRAM and bat_therm/bat_id ADC nodes; boards enable the gauge themselves.
+
+- `patches/1321-power-supply-qcom-pm6150-smb5-charger.patch`
+  source: armada
+  upstream: local
+  notes: Adds the PM6150 SMB5 charger node, USB input ADC channels, and a TCPM current-limit bridge. The Xiaomi board DTS configures direct-charge and thermal limits. SMB1396 charge-pump modes are excluded.

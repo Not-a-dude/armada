@@ -1411,7 +1411,7 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_fg.c linux/drivers/power/supply
 diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers/power/supply/qcom_pm8150b_charger.c
 --- linux.orig/drivers/power/supply/qcom_pm8150b_charger.c	1970-01-01 00:00:00.000000000 +0000
 +++ linux/drivers/power/supply/qcom_pm8150b_charger.c	2025-09-29 13:35:08.289792859 +0000
-@@ -0,0 +1,940 @@
+@@ -0,0 +1,1142 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Copyright (c) 2024, Teguh Sobirin <teguh@sobir.in>.
@@ -1430,6 +1430,7 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +#include <linux/kernel.h>
 +#include <linux/minmax.h>
 +#include <linux/module.h>
++#include <linux/mutex.h>
 +#include <linux/platform_device.h>
 +#include <linux/pm_wakeirq.h>
 +#include <linux/of.h>
@@ -1489,6 +1490,9 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +
 +#define FLOAT_VOLTAGE_CFG			0x70
 +#define FLOAT_VOLTAGE_SETTING_MASK		GENMASK(7, 0)
++
++#define JEITA_EN_CFG				0x90
++#define JEITA_EN_HARDLIMIT_BIT			BIT(4)
 +
 +#define CHARGE_RCHG_SOC_THRESHOLD_CFG_REG	0x7D
 +#define CHARGE_RCHG_SOC_THRESHOLD_CFG_MASK	GENMASK(7, 0)
@@ -1669,6 +1673,8 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +#define CDP_CURRENT_UA			3000000
 +#define DCP_CURRENT_UA			3300000
 +#define CURRENT_MAX_UA			DCP_CURRENT_UA
++#define PM6150_MAX_FCC_UA		3500000
++#define SMB5_MAX_ICL_UA			5000000
 +
 +/* pmi8150b registers represent current in increments of 1/40th of an amp */
 +#define CURRENT_SCALE_FACTOR		50000
@@ -1711,6 +1717,16 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +	unsigned int base;
 +	struct regmap *regmap;
 +	struct power_supply_battery_info *batt_info;
++	struct mutex lock;
++
++	u32 fcc_max_ua;
++	u32 usb_icl_max_ua;
++	u32 float_voltage_uv;
++	u32 *thermal_fcc_ua;
++	u32 *thermal_icl_ua;
++	int thermal_levels;
++	int thermal_level;
++	bool pm6150;
 +
 +	struct delayed_work status_change_work;
 +	int cable_irq;
@@ -1726,6 +1742,10 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +	POWER_SUPPLY_PROP_MANUFACTURER,
 +	POWER_SUPPLY_PROP_MODEL_NAME,
 +	POWER_SUPPLY_PROP_CURRENT_MAX,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,
++	POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT,
++	POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT_MAX,
 +	POWER_SUPPLY_PROP_CURRENT_NOW,
 +	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 +	POWER_SUPPLY_PROP_STATUS,
@@ -1864,15 +1884,70 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +{
 +	unsigned char val_raw;
 +
-+	if (val > 4950000) {
++	if (val > chip->usb_icl_max_ua)
++		val = chip->usb_icl_max_ua;
++
++	if (val > SMB5_MAX_ICL_UA) {
 +		dev_err(chip->dev,
-+			"Can't set current limit higher than 4950000uA");
++			"Can't set current limit higher than %uuA\n", SMB5_MAX_ICL_UA);
 +		return -EINVAL;
 +	}
 +	val_raw = val / CURRENT_SCALE_FACTOR;
 +
 +	return regmap_write(chip->regmap, chip->base + USBIN_CURRENT_LIMIT_CFG,
 +		val_raw);
++}
++
++static int smb5_set_fast_charge_current(struct smb5_chip *chip, u32 val)
++{
++	u8 val_raw;
++
++	if (val > chip->fcc_max_ua)
++		val = chip->fcc_max_ua;
++
++	val_raw = DIV_ROUND_CLOSEST(val, CURRENT_SCALE_FACTOR);
++	return regmap_update_bits(chip->regmap,
++				  chip->base + FAST_CHARGE_CURRENT_CFG,
++				  FAST_CHARGE_CURRENT_SETTING_MASK, val_raw);
++}
++
++static int smb5_set_float_voltage(struct smb5_chip *chip, u32 val)
++{
++	u8 val_raw;
++
++	if (chip->pm6150) {
++		/* PM6150's float-voltage field starts at 3.6 V in 10 mV steps. */
++		if (val < 3600000 || val > 4790000)
++			return -EINVAL;
++		val_raw = DIV_ROUND_CLOSEST(val - 3600000, 10000);
++	} else {
++		if (val < 3487500 || val > 5400000)
++			return -EINVAL;
++		val_raw = DIV_ROUND_CLOSEST(val - 3487500, 7500) + 1;
++	}
++
++	return regmap_update_bits(chip->regmap,
++				  chip->base + FLOAT_VOLTAGE_CFG,
++				  FLOAT_VOLTAGE_SETTING_MASK, val_raw);
++}
++
++static int smb5_apply_thermal_limit(struct smb5_chip *chip)
++{
++	u32 fcc = chip->fcc_max_ua;
++	u32 icl = chip->usb_icl_max_ua;
++	int level = chip->thermal_level;
++	int rc;
++
++	if (level) {
++		fcc = chip->thermal_fcc_ua[level - 1];
++		icl = chip->thermal_icl_ua[level - 1];
++	}
++
++	rc = smb5_set_fast_charge_current(chip, fcc);
++	if (rc)
++		return rc;
++
++	return smb5_set_current_limit(chip, icl);
 +}
 +
 +static void smb5_status_change_work(struct work_struct *work)
@@ -1923,7 +1998,12 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +		break;
 +	}
 +
++	mutex_lock(&chip->lock);
++	if (chip->thermal_level)
++		current_ua = min_t(unsigned int, current_ua,
++				   chip->thermal_icl_ua[chip->thermal_level - 1]);
 +	smb5_set_current_limit(chip, current_ua);
++	mutex_unlock(&chip->lock);
 +	power_supply_changed(chip->chg_psy);
 +}
 +
@@ -1946,6 +2026,37 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +	}
 +
 +	return iio_read_channel_processed(chan, val);
++}
++
++static int smb5_get_fast_charge_current(struct smb5_chip *chip, int *val)
++{
++	unsigned int reg;
++	int rc;
++
++	rc = regmap_read(chip->regmap, chip->base + FAST_CHARGE_CURRENT_CFG,
++			 &reg);
++	if (!rc)
++		*val = (reg & FAST_CHARGE_CURRENT_SETTING_MASK) * CURRENT_SCALE_FACTOR;
++
++	return rc;
++}
++
++static int smb5_get_float_voltage(struct smb5_chip *chip, int *val)
++{
++	unsigned int reg;
++	int rc;
++
++	rc = regmap_read(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG, &reg);
++	if (!rc) {
++		if (chip->pm6150)
++			*val = 3600000 +
++				(reg & FLOAT_VOLTAGE_SETTING_MASK) * 10000;
++		else
++			*val = 3487500 +
++				((int)(reg & FLOAT_VOLTAGE_SETTING_MASK) - 1) * 7500;
++	}
++
++	return rc;
 +}
 +
 +static int smb5_get_prop_health(struct smb5_chip *chip, int *val)
@@ -2000,6 +2111,16 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +		return 0;
 +	case POWER_SUPPLY_PROP_CURRENT_MAX:
 +		return smb5_get_current_limit(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
++		return smb5_get_fast_charge_current(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
++		return smb5_get_float_voltage(chip, &val->intval);
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
++		val->intval = chip->thermal_level;
++		return 0;
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT_MAX:
++		val->intval = chip->thermal_levels;
++		return 0;
 +	case POWER_SUPPLY_PROP_CURRENT_NOW:
 +		return smb5_get_iio_chan(chip, chip->usb_in_i_chan,
 +					 &val->intval);
@@ -2025,10 +2146,39 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +			     const union power_supply_propval *val)
 +{
 +	struct smb5_chip *chip = power_supply_get_drvdata(psy);
++	unsigned int input_current;
++	int rc;
 +
 +	switch (psp) {
 +	case POWER_SUPPLY_PROP_CURRENT_MAX:
-+		return smb5_set_current_limit(chip, val->intval);
++		mutex_lock(&chip->lock);
++		input_current = val->intval;
++		if (chip->thermal_level)
++			input_current = min_t(unsigned int, input_current,
++						chip->thermal_icl_ua[chip->thermal_level - 1]);
++		rc = smb5_set_current_limit(chip, input_current);
++		mutex_unlock(&chip->lock);
++		return rc;
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
++		mutex_lock(&chip->lock);
++		rc = smb5_set_fast_charge_current(chip, val->intval);
++		mutex_unlock(&chip->lock);
++		return rc;
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
++		mutex_lock(&chip->lock);
++		rc = smb5_set_float_voltage(chip, val->intval);
++		mutex_unlock(&chip->lock);
++		return rc;
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
++		if (val->intval < 0 || val->intval > chip->thermal_levels)
++			return -EINVAL;
++		mutex_lock(&chip->lock);
++		chip->thermal_level = val->intval;
++		rc = smb5_apply_thermal_limit(chip);
++		mutex_unlock(&chip->lock);
++		if (!rc)
++			power_supply_changed(chip->chg_psy);
++		return rc;
 +	default:
 +		dev_err(chip->dev, "No setter for property: %d\n", psp);
 +		return -EINVAL;
@@ -2040,6 +2190,9 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +{
 +	switch (psp) {
 +	case POWER_SUPPLY_PROP_CURRENT_MAX:
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
++	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
 +		return 1;
 +	default:
 +		return 0;
@@ -2118,32 +2271,12 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +	{ .addr = USBIN_CMD_IL, .mask = USBIN_SUSPEND_BIT, .val = 0 },
 +	{ .addr = AICL_RERUN_TIME_CFG, .mask = AICL_RERUN_TIME_MASK, .val = 0 },
 +	/*
-+	 * By default configure us as an upstream facing port
-+	 * FIXME: This will be handled by the type-c driver
-+	 */
-+	{ .addr = TYPE_C_MODE_CFG,
-+	  .mask = EN_TRY_SNK_BIT | EN_SNK_ONLY_BIT,
-+	  .val = EN_TRY_SNK_BIT },
-+	{ .addr = TYPEC_TYPE_C_VCONN_CONTROL,
-+	  .mask = VCONN_EN_ORIENTATION_BIT | VCONN_EN_SRC_BIT |
-+		  VCONN_EN_VALUE_BIT,
-+	  .val = VCONN_EN_SRC_BIT },
-+	{ .addr = DEBUG_ACCESS_SRC_CFG,
-+	  .mask = EN_UNORIENTED_DEBUG_ACCESS_SRC_BIT,
-+	  .val = EN_UNORIENTED_DEBUG_ACCESS_SRC_BIT },
-+	{ .addr = TYPE_C_EXIT_STATE_CFG,
-+	  .mask = SEL_SRC_UPPER_REF_BIT,
-+	  .val = SEL_SRC_UPPER_REF_BIT },
-+	/*
 +	 * Disable Type-C factory mode and stay in Attached.SRC state when VCONN
 +	 * over-current happens
 +	 */
 +	{ .addr = TYPE_C_CFG,
 +	  .mask = BC1P2_START_ON_CC_BIT,
 +	  .val = 0 },
-+	{ .addr = TYPE_C_DEBUG_ACCESS_SINK,
-+	  .mask = TYPEC_DEBUG_ACCESS_SINK_MASK,
-+	  .val = 0x17 },
 +	/* Configure VBUS for software control */
 +	{ .addr = OTG_CFG, .mask = OTG_EN_SRC_CFG_BIT, .val = 0 },
 +	/*
@@ -2157,6 +2290,9 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +	{ .addr = CHARGING_ENABLE_CMD,
 +	  .mask = CHARGING_ENABLE_CMD_BIT,
 +	  .val = CHARGING_ENABLE_CMD_BIT },
++	{ .addr = JEITA_EN_CFG,
++	  .mask = JEITA_EN_HARDLIMIT_BIT,
++	  .val = JEITA_EN_HARDLIMIT_BIT },
 +	/* Enable BC1P2 Src detect */
 +	{ .addr = USBIN_OPTIONS_1_CFG,
 +	  .mask = BC1P2_SRC_DETECT_BIT,
@@ -2207,6 +2343,63 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +	return 0;
 +}
 +
++static int smb5_read_thermal_limits(struct smb5_chip *chip)
++{
++	struct device_node *node = chip->dev->of_node;
++	int fcc_levels, icl_levels;
++
++	fcc_levels = of_property_count_u32_elems(node, "qcom,thermal-mitigation");
++	icl_levels = of_property_count_u32_elems(node,
++					  "qcom,thermal-mitigation-icl");
++	if (fcc_levels < 0 && icl_levels < 0)
++		return 0;
++
++	if (fcc_levels <= 0 || fcc_levels != icl_levels)
++		return dev_err_probe(chip->dev, -EINVAL,
++				     "thermal FCC and ICL limits must have equal lengths\n");
++
++	chip->thermal_fcc_ua = devm_kcalloc(chip->dev, fcc_levels,
++					      sizeof(*chip->thermal_fcc_ua), GFP_KERNEL);
++	chip->thermal_icl_ua = devm_kcalloc(chip->dev, icl_levels,
++					      sizeof(*chip->thermal_icl_ua), GFP_KERNEL);
++	if (!chip->thermal_fcc_ua || !chip->thermal_icl_ua)
++		return -ENOMEM;
++
++	if (of_property_read_u32_array(node, "qcom,thermal-mitigation",
++				       chip->thermal_fcc_ua, fcc_levels) ||
++	    of_property_read_u32_array(node, "qcom,thermal-mitigation-icl",
++				       chip->thermal_icl_ua, icl_levels))
++		return dev_err_probe(chip->dev, -EINVAL,
++				     "failed to read thermal charging limits\n");
++
++	chip->thermal_levels = fcc_levels;
++	return 0;
++}
++
++static int smb5_parse_configuration(struct smb5_chip *chip)
++{
++	struct device_node *node = chip->dev->of_node;
++	u32 value;
++	int rc;
++
++	chip->fcc_max_ua = chip->pm6150 ? PM6150_MAX_FCC_UA : 8000000;
++	chip->usb_icl_max_ua = chip->pm6150 ? 3000000 : SMB5_MAX_ICL_UA;
++	chip->float_voltage_uv = chip->batt_info->voltage_max_design_uv;
++
++	if (!of_property_read_u32(node, "qcom,fcc-max-ua", &value))
++		chip->fcc_max_ua = min(value, chip->fcc_max_ua);
++	if (!of_property_read_u32(node, "qcom,usb-icl-ua", &value))
++		chip->usb_icl_max_ua = min(value, (u32)SMB5_MAX_ICL_UA);
++	if (!of_property_read_u32(node, "qcom,fv-max-uv", &value))
++		chip->float_voltage_uv = value;
++
++	rc = smb5_read_thermal_limits(chip);
++	if (rc)
++		return rc;
++
++	return smb5_set_float_voltage(chip, chip->float_voltage_uv);
++}
++
 +static int smb5_init_irq(struct smb5_chip *chip, int *irq, const char *name,
 +			 irqreturn_t (*handler)(int irq, void *data))
 +{
@@ -2242,6 +2435,9 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +
 +	chip->dev = &pdev->dev;
 +	chip->name = pdev->name;
++	chip->pm6150 = of_device_is_compatible(chip->dev->of_node,
++						"qcom,pm6150-charger");
++	mutex_init(&chip->lock);
 +
 +	chip->regmap = dev_get_regmap(pdev->dev.parent, NULL);
 +	if (!chip->regmap)
@@ -2292,17 +2488,21 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +		return dev_err_probe(chip->dev, rc,
 +				     "Failed to get battery info\n");
 +
++	rc = smb5_parse_configuration(chip);
++	if (rc)
++		return dev_err_probe(chip->dev, rc,
++				     "failed to parse charging configuration\n");
++
++	rc = smb5_apply_thermal_limit(chip);
++	if (rc)
++		return dev_err_probe(chip->dev, rc,
++				     "failed to configure charging currents\n");
++
 +	rc = devm_delayed_work_autocancel(chip->dev, &chip->status_change_work,
 +					  smb5_status_change_work);
 +	if (rc)
 +		return dev_err_probe(chip->dev, rc,
 +				     "Failed to init status change work\n");
-+
-+	rc = (chip->batt_info->voltage_max_design_uv - 3487500) / 7500 + 1;
-+	rc = regmap_update_bits(chip->regmap, chip->base + FLOAT_VOLTAGE_CFG,
-+				FLOAT_VOLTAGE_SETTING_MASK, rc);
-+	if (rc < 0)
-+		return dev_err_probe(chip->dev, rc, "Couldn't set vbat max\n");
 +
 +	rc = smb5_init_irq(chip, &irq, "bat-ov", smb5_handle_batt_overvoltage);
 +	if (rc < 0)
@@ -2321,6 +2521,7 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +	if (rc < 0)
 +		return rc;
 +
++	device_init_wakeup(chip->dev, true);
 +	rc = dev_pm_set_wake_irq(chip->dev, chip->cable_irq);
 +	if (rc < 0)
 +		return dev_err_probe(chip->dev, rc, "Couldn't set wake irq\n");
@@ -2335,6 +2536,7 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +
 +static const struct of_device_id smb5_match_id_table[] = {
 +	{ .compatible = "qcom,pm8150b-charger", .data = "pm8150b" },
++	{ .compatible = "qcom,pm6150-charger", .data = "pm6150" },
 +	{ /* sentinal */ }
 +};
 +MODULE_DEVICE_TABLE(of, smb5_match_id_table);

@@ -437,6 +437,27 @@
 	status = "okay";
 };
 
+&pm6150_charger {
+	monitored-battery = <&battery>;
+
+	/* PM6150 direct-charge limits. Higher Xiaomi modes require SMB1396. */
+	qcom,fcc-max-ua = <3500000>;
+	qcom,usb-icl-ua = <3000000>;
+	qcom,fv-max-uv = <4480000>;
+
+	/* Thermal levels are ordered from the coolest to the hottest state. */
+	qcom,thermal-mitigation = <3500000 3400000 3300000 3200000
+				   3100000 3000000 2900000 2800000
+				   2600000 2400000 2200000 2000000
+				   1800000 1500000 1000000 500000>;
+	qcom,thermal-mitigation-icl = <2800000 2700000 2600000 2400000
+				       2200000 2100000 2000000 2000000
+				       2000000 1900000 1800000 1600000
+				       1500000 1300000 800000 750000>;
+
+	status = "okay";
+};
+
 &pm6150l_wled {
 	qcom,cabc;
 	qcom,cabc-sel = <1>;
@@ -456,6 +477,7 @@
 &pm6150_typec {
 	vdd-vbus-supply = <&pm6150_vbus>;
 	vdd-pdphy-supply = <&vreg_l17a_3p1>;
+	qcom,charger = <&pm6150_charger>;
 	status = "okay";
 
 	connector {

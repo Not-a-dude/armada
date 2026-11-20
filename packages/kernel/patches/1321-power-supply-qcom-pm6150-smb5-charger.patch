@@ -1,0 +1,112 @@
+Subject: [PATCH] power: supply: add PM6150 SMB5 charging support
+
+Enable the main PM6150 SMB5 charger used by Xiaomi miatoll devices. The
+driver applies direct-charge current, voltage and thermal limits from DT,
+exports standard charge-control properties, and leaves charge-pump support
+out of scope. TCPM publishes the negotiated sink current to SMB5 so a PD
+contract cannot exceed the configured USB input limit.
+
+--- a/arch/arm64/boot/dts/qcom/pm6150.dtsi
++++ b/arch/arm64/boot/dts/qcom/pm6150.dtsi
+@@ -68,6 +68,26 @@
+ 			status = "disabled";
+ 		};
+ 
++		pm6150_charger: charger@1000 {
++			compatible = "qcom,pm6150-charger";
++			reg = <0x1000>;
++
++			interrupts = <0x0 0x13 0x4 IRQ_TYPE_EDGE_BOTH>,
++				     <0x0 0x12 0x2 IRQ_TYPE_EDGE_BOTH>,
++				     <0x0 0x16 0x1 IRQ_TYPE_EDGE_RISING>,
++				     <0x0 0x13 0x7 IRQ_TYPE_EDGE_RISING>;
++			interrupt-names = "usbin-plugin",
++					  "bat-ov",
++					  "wdog-bark",
++					  "usbin-icl-change";
++
++			io-channels = <&pm6150_adc ADC5_USB_IN_I>,
++				      <&pm6150_adc ADC5_USB_IN_V_16>;
++			io-channel-names = "usb_in_i_uv", "usb_in_v_div_16";
++
++			status = "disabled";
++		};
++
+ 		pm6150_typec: typec@1500 {
+ 			compatible = "qcom,pm6150-typec",
+ 				     "qcom,pm8150b-typec";
+@@ -131,6 +151,18 @@
+ 				label = "die_temp";
+ 			};
+ 
++			channel@7 {
++				reg = <ADC5_USB_IN_I>;
++				qcom,pre-scaling = <1 1>;
++				label = "usb_in_i";
++			};
++
++			channel@8 {
++				reg = <ADC5_USB_IN_V_16>;
++				qcom,pre-scaling = <1 16>;
++				label = "usb_in_v";
++			};
++
+ 			bat_therm@4a {
+ 				reg = <ADC5_BAT_THERM_100K_PU>;
+ 				label = "bat_therm";
+--- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec.h
++++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec.h
+@@ -9,6 +9,7 @@ struct pmic_typec {
+ 	struct device		*dev;
+ 	struct tcpm_port	*tcpm_port;
+ 	struct tcpc_dev		tcpc;
++	struct power_supply	*charger;
+ 	struct pmic_typec_pdphy	*pmic_typec_pdphy;
+ 	struct pmic_typec_port	*pmic_typec_port;
+ 
+--- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec.c
++++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec.c
+@@ -8,6 +8,7 @@
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/power_supply.h>
+ #include <linux/regmap.h>
+ #include <linux/slab.h>
+ #include <linux/usb/tcpm.h>
+ 
+@@ -24,6 +25,19 @@ static int qcom_pmic_typec_init(struct tcpc_dev *tcpc)
+ 	return 0;
+ }
+ 
++static int qcom_pmic_typec_set_current_limit(struct tcpc_dev *tcpc,
++					     u32 max_ma, u32 mv)
++{
++	struct pmic_typec *tcpm = tcpc_to_tcpm(tcpc);
++	union power_supply_propval val = { .intval = max_ma * 1000 };
++
++	if (!tcpm->charger)
++		return 0;
++
++	return power_supply_set_property(tcpm->charger,
++					 POWER_SUPPLY_PROP_CURRENT_MAX, &val);
++}
++
+ static int qcom_pmic_typec_probe(struct platform_device *pdev)
+ {
+ 	struct pmic_typec *tcpm;
+@@ -44,6 +58,15 @@ static int qcom_pmic_typec_probe(struct platform_device *pdev)
+ 
+ 	tcpm->dev = dev;
+ 	tcpm->tcpc.init = qcom_pmic_typec_init;
++
++	tcpm->charger = devm_power_supply_get_by_reference(dev, "qcom,charger");
++	if (IS_ERR(tcpm->charger)) {
++		if (PTR_ERR(tcpm->charger) != -ENOENT)
++			return dev_err_probe(dev, PTR_ERR(tcpm->charger),
++					     "failed to get charger supply\n");
++		tcpm->charger = NULL;
++	}
++	tcpm->tcpc.set_current_limit = qcom_pmic_typec_set_current_limit;
+ 
+ 	regmap = dev_get_regmap(dev->parent, NULL);
+ 	if (!regmap) {
