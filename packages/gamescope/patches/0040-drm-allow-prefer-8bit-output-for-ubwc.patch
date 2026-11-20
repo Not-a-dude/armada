@@ -1,0 +1,35 @@
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -2086,16 +2086,22 @@
+ 	// 2. When compositing HDR content as a fallback when we undock, it avoids introducing
+ 	// a bunch of horrible banding when going to G2.2 curve.
+ 	// It ensures that we can dither that.
+-	g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XRGB2101010, DRM_FORMAT_ARGB2101010);
+-	if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
+-		g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XBGR2101010, DRM_FORMAT_ABGR2101010);
+-		if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
+-			g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XRGB8888, DRM_FORMAT_ARGB8888);
+-			if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
+-				drm_log.errorf("Primary plane doesn't support any formats >= 8888");
+-				return false;
+-			}
++	const bool bPrefer8Bit = env_to_bool( getenv( "GAMESCOPE_PREFER_8BIT_OUTPUT" ) );
++	if ( bPrefer8Bit ) {
++		g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XRGB8888, DRM_FORMAT_ARGB8888);
++	}
++	if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
++		g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XRGB2101010, DRM_FORMAT_ARGB2101010);
++	}
++	if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
++		g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XBGR2101010, DRM_FORMAT_ABGR2101010);
++	}
++	if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
++		g_nDRMFormat = pick_plane_format(&drm->primary_formats, DRM_FORMAT_XRGB8888, DRM_FORMAT_ARGB8888);
++		if ( g_nDRMFormat == DRM_FORMAT_INVALID ) {
++			drm_log.errorf("Primary plane doesn't support any formats >= 8888");
++			return false;
+ 		}
+ 	}
+ 
+ 	if (have_overlay_planes(drm)) {
