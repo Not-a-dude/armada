@@ -1,14 +1,14 @@
 diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
 --- a/src/rendervulkan.hpp
 +++ b/src/rendervulkan.hpp
-@@ -1032,6 +1032,7 @@ public:
+@@ -1032,5 +1032,6 @@ public:
  	void bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> texture);
  	void bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d);
 +	void setLut3DLinear(bool linear) { m_lut3DLinear = linear; }
  	void setTextureStorage(bool storage);
  	void setTextureSrgb(uint32_t slot, bool srgb);
  	void setSamplerNearest(uint32_t slot, bool nearest);
-@@ -1094,6 +1095,7 @@ private:
+@@ -1094,5 +1095,6 @@ private:
  	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
  	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D;
 +	bool m_lut3DLinear = false;
@@ -18,7 +18,7 @@ diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
 diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
 --- a/src/rendervulkan.cpp
 +++ b/src/rendervulkan.cpp
-@@ -1742,6 +1742,7 @@ void CVulkanCmdBuffer::reset()
+@@ -1742,5 +1742,6 @@ void CVulkanCmdBuffer::reset()
  	m_usedDescriptorSets.clear();
  	m_textureState.clear();
 +	m_lut3DLinear = false;
