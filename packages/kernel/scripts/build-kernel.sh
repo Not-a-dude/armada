@@ -21,10 +21,6 @@ KCONFIG_OVERRIDES="${REPO_ROOT}/config/armada-kernel.config.overrides"
 HOST_ARCH=$(uname -m)
 JOBS=$(nproc)
 MAKE_ARGS=(-j"${JOBS}" LLVM=1 ARCH=arm64)
-# Fedora 44's glibc pulls in <asm/sigcontext.h>, which now uses __u128, but the
-# installed kernel-headers no longer provide it on the include path of host
-# tools (resolve_btfids, libbpf). Harmless on other distributions.
-MAKE_ARGS+=(HOSTCFLAGS="-include linux/types.h")
 
 # LLVM/Clang toolchain: clang + lld + llvm-{ar,nm,objcopy,objdump,readelf,strip}.
 for tool in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip; do
