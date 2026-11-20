@@ -68,12 +68,10 @@ index 1111111..2222222 100644
  void main() {
      uvec2 coord = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
      vec2 uv = vec2(coord);
-@@ -148,7 +166,14 @@ void main() {
+@@ -148,5 +166,14 @@ void main() {
          result = blendFastLayer(result, li, u_opacity[i]);
      }
  
--    // Convert back from linear blending to output sRGB encoding
--    result.rgb = layerRegamma(result.rgb);
 +    if (textureQueryLevels(s_shaperLut[0]) != 0) {
 +        // Shaper LUT expects Gamma 2.2 encoded input; 3D LUT outputs Gamma 2.2.
 +        result.rgb = linearToSrgbFast(result.rgb);
