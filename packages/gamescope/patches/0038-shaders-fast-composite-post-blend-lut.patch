@@ -174,7 +174,7 @@ diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
 +    // perform_3dlut_tetrahedral. Sampled with hardware VK_FILTER_LINEAR.
 +    float size = float(textureSize(lut, 0).x);
 +    float offset = 0.5 / size;
-+    vec3 c = clamp(vec3(color.bgr), 0.0, 1.0) * (1.0 - 2.0 * offset) + offset;
++    vec3 c = clamp(vec3(color.rgb), 0.0, 1.0) * (1.0 - 2.0 * offset) + offset;
 +    return textureLod(lut, c, 0.0).rgb;
  }
  
