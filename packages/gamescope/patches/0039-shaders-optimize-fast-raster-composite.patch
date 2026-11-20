@@ -1,0 +1,186 @@
+diff --git a/src/shaders/vs_composite_blit.vert b/src/shaders/vs_composite_blit.vert
+--- a/src/shaders/vs_composite_blit.vert
++++ b/src/shaders/vs_composite_blit.vert
+@@ -1,10 +1,29 @@
+ #version 450
+ 
+-// Fullscreen triangle for the raster composite path. No vertex buffers: the
+-// position comes from gl_VertexIndex and the fragment shader derives all of
+-// its coordinates from gl_FragCoord.
++#extension GL_GOOGLE_include_directive : require
++#extension GL_EXT_scalar_block_layout : require
++
++#include "descriptor_set_constants.h"
++#include "blit_push_data.h"
++
++layout(location = 0) out vec2 v_layer0Uv;
++
++// Fullscreen triangle for the raster composite path. No vertex buffers: the
++// position comes from gl_VertexIndex. Layer 0's unrotated, scaled/offset UV is
++// computed here so the hardware interpolator handles it at zero FS ALU cost.
+ void main()
+ {
+     vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));
+     gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
++
++    vec2 fragCoord = p * vec2(u_outputSize);
++    vec2 uv;
++    switch (u_rotation) {
++        case 1u: uv = vec2(float(u_outputSize.y) - fragCoord.y, fragCoord.x); break;
++        case 2u: uv = vec2(float(u_outputSize.x) - fragCoord.x, float(u_outputSize.y) - fragCoord.y); break;
++        case 3u: uv = vec2(fragCoord.y, float(u_outputSize.x) - fragCoord.x); break;
++        default: uv = fragCoord; break;
++    }
++    v_layer0Uv = (uv + u_offset[0]) * u_scale[0];
+ }
+diff --git a/src/shaders/fs_composite_fast.frag b/src/shaders/fs_composite_fast.frag
+--- a/src/shaders/fs_composite_fast.frag
++++ b/src/shaders/fs_composite_fast.frag
+@@ -18,6 +18,7 @@ layout(constant_id = 5) const uint c_output_eotf       = 0;
+ layout(constant_id = 7) const bool c_itm_enable        = false;
+ 
++layout(location = 0) in vec2 v_layer0Uv;
+ layout(location = 0) out mediump vec4 outColor;
+ 
+ #include "blit_push_data.h"
+@@ -39,14 +40,21 @@ uvec2 unrotateOutputCoord(uvec2 p, uint rotation) {
+     }
+ }
+ 
+-mediump vec4 sampleFastLayer(uint layerIdx, vec2 uv) {
+-    vec2 coord = (uv + u_offset[layerIdx]) * u_scale[layerIdx];
++mediump vec4 sampleFastLayerCoord(uint layerIdx, vec2 coord) {
+     vec2 texSize = vec2(textureSize(s_samplers[layerIdx], 0));
+     if (coord.x < 0.0 || coord.y < 0.0 || coord.x >= texSize.x || coord.y >= texSize.y) {
+         mediump float border = (u_borderMask & (1u << layerIdx)) != 0u ? 1.0 : 0.0;
+         return vec4(0.0, 0.0, 0.0, border);
+     }
+     mediump vec4 color = textureLod(s_samplers[layerIdx], coord, 0.0);
+-    color.rgb = vec4(color.rgb, 1.0) * u_ctm[layerIdx];
++    // Bit (8 + layerIdx) of u_hoistColorMgmt indicates a non-identity CTM.
++    if ((u_hoistColorMgmt & (1u << (8u + layerIdx))) != 0u) {
++        color.rgb = vec4(color.rgb, 1.0) * u_ctm[layerIdx];
++    }
+     return color;
+ }
++
++mediump vec4 sampleFastLayer(uint layerIdx, vec2 uv) {
++    vec2 coord = (uv + u_offset[layerIdx]) * u_scale[layerIdx];
++    return sampleFastLayerCoord(layerIdx, coord);
++}
+ 
+ mediump vec4 blendFastLayer(mediump vec4 dstCol, mediump vec4 srcCol, mediump float opacity) {
+@@ -80,22 +88,24 @@ mediump vec3 perform_3dlut_fast(mediump vec3 color, sampler3D lut) {
+ }
+ 
+ void main() {
+-    uvec2 coord = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
+-    vec2 uv = vec2(coord);
+-
+     mediump vec4 result = vec4(0.0);
+     if (c_layerCount > 0)
+-        result = sampleFastLayer(0u, uv) * u_opacity[0];
++        result = sampleFastLayerCoord(0u, v_layer0Uv) * u_opacity[0];
+ 
+-    for (int i = 1; i < c_layerCount; i++) {
+-        mediump vec4 li = sampleFastLayer(uint(i), uv);
+-        result = blendFastLayer(result, li, u_opacity[i]);
++    if (c_layerCount > 1) {
++        uvec2 coord = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
++        vec2 uv = vec2(coord);
++        for (int i = 1; i < c_layerCount; i++) {
++            mediump vec4 li = sampleFastLayer(uint(i), uv);
++            result = blendFastLayer(result, li, u_opacity[i]);
++        }
+     }
+ 
+-    if (u_hoistColorMgmt != 0u) {
++    if ((u_hoistColorMgmt & 1u) != 0u) {
+         // Shaper LUT expects sRGB-encoded input; 3D LUT outputs display Gamma 2.2
+         // encoding directly (skipping the redundant srgbToLinear -> linearToSrgb pair).
+         result.rgb = linearToSrgbFast(result.rgb);
+         result.rgb = perform_1dlut_fast(result.rgb, s_shaperLut[0]);
+         result.rgb = perform_3dlut_fast(result.rgb, s_lut3D[0]);
+     } else if (c_output_eotf == 0u) {
+         result.rgb = linearToSrgbFast(result.rgb);
+     }
+ 
+     outColor = result;
+ }
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -1999,6 +1999,22 @@ void CVulkanCmdBuffer::drawFullscreen()
+ 
+ 	const VkExtent2D extent = { m_target->width(), m_target->height() };
+ 
++	const VkImageMemoryBarrier2 toColorAttachment = {
++		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
++		.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++		.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
++		.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
++		.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
++		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
++		.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
++		.image = m_target->vkImage(),
++		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
++	};
++	const VkDependencyInfo preDep = {
++		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++		.imageMemoryBarrierCount = 1,
++		.pImageMemoryBarriers = &toColorAttachment,
++	};
++	m_device->vk.CmdPipelineBarrier2(m_cmdBuffer, &preDep);
++
+ 	// The shader writes every pixel, so there is nothing to load.
+ 	VkRenderingAttachmentInfo colorAttachment = {
+ 		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+ 		.imageView = m_target->srgbView(),
+-		.imageLayout = VK_IMAGE_LAYOUT_GENERAL,
++		.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+ 		.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+ 		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+ 	};
+@@ -2026,6 +2042,24 @@ void CVulkanCmdBuffer::drawFullscreen()
+ 	m_device->vk.CmdDraw(m_cmdBuffer, 3, 1, 0, 0);
+ 	m_device->vk.CmdEndRendering(m_cmdBuffer);
+ 
++	const VkImageMemoryBarrier2 toGeneral = {
++		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
++		.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
++		.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
++		.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++		.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
++		.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
++		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
++		.image = m_target->vkImage(),
++		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
++	};
++	const VkDependencyInfo postDep = {
++		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++		.imageMemoryBarrierCount = 1,
++		.pImageMemoryBarriers = &toGeneral,
++	};
++	m_device->vk.CmdPipelineBarrier2(m_cmdBuffer, &postDep);
++
+ 	markDirty(m_target);
+ }
+ 
+@@ -4876,9 +4910,16 @@
+ 		cmdBuffer->bindGraphicsPipeline( g_device.pipeline(fsType, frameInfo->layers.count(), frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF, false, eAttachmentFormat ));
+ 		bind_all_layers(cmdBuffer.get(), frameInfo);
+ 		cmdBuffer->bindTarget(compositeImage);
++		uint32_t uCtmMask = 0;
++		for ( int i = 0; i < frameInfo->layers.count() && i < 8; i++ )
++		{
++			if ( frameInfo->layers.get( i ).ctm != nullptr )
++				uCtmMask |= (1u << (8u + i));
++		}
+ 		const uint32_t uHoistFlag = bCanUseFastFs
+ 			? ( !bNoLuts ? 1u : 0u )
+ 			: ( bHoistColorMgmt ? 1u : 0u );
+-		cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo, uOutputRotation, compositeImage->width(), compositeImage->height(), uHoistFlag);
++		cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo, uOutputRotation, compositeImage->width(), compositeImage->height(), uHoistFlag | uCtmMask);
+ 
+ 		cmdBuffer->drawFullscreen();
+ 	}
