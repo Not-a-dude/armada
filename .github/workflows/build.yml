@@ -298,16 +298,16 @@ jobs:
     needs: build_push
     if: >-
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging') &&
-      needs.build_push.outputs.channel != '' &&
-      github.repository == 'armada-os/armada'
+      needs.build_push.outputs.channel != '' ||
+      github.repository != 'armada-os/armada'
     permissions:
       contents: read
       packages: read
     uses: ./.github/workflows/build-disk.yml
     with:
       tag: ${{ needs.build_push.outputs.tag }}
-      channel: ${{ needs.build_push.outputs.channel }}
-      publish_r2: true
+      channel: ${{ needs.build_push.outputs.channel || 'preview' }}
+      publish_r2: ${{ github.repository == 'armada-os/armada' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging') && needs.build_push.outputs.channel != '' }}
       image_digest: ${{ needs.build_push.outputs.digest }}
       source_ref: ${{ needs.build_push.outputs.revision }}
     secrets:

@@ -51,9 +51,20 @@ usr=${deploy}/usr
 sudo test -s "${WORK}/mnt/KERNEL"
 # ROCKNIX ABL would start bootc-image-builder's shim ahead of /KERNEL.
 sudo rm -rf "${WORK}/mnt/EFI"
+if [[ -f "${usr}/lib/systemd/boot/efi/systemd-bootaa64.efi" ]]; then
+    sudo mkdir -p "${WORK}/mnt/EFI/BOOT" "${WORK}/mnt/EFI/systemd"
+    sudo cp "${usr}/lib/systemd/boot/efi/systemd-bootaa64.efi" "${WORK}/mnt/EFI/BOOT/BOOTAA64.EFI"
+    sudo cp "${usr}/lib/systemd/boot/efi/systemd-bootaa64.efi" "${WORK}/mnt/EFI/systemd/systemd-bootaa64.efi"
+fi
 sudo env ESP="${WORK}/mnt" BOOTROOT="${WORK}/boot" SYSROOT="${WORK}/root" \
     ARGS_FILE="${usr}/lib/armada/bootimg-args" \
-    "${usr}/libexec/armada/armada-efi-update"
+    "${REPO_ROOT}/system_files/usr/libexec/armada/armada-efi-update"
+vmlinuz_efi=$(find "${usr}/lib/modules" -maxdepth 2 -name 'vmlinuz.efi' | head -1)
+if [[ -n "${vmlinuz_efi}" ]]; then
+    for kdst in "${WORK}/mnt/ostree"/*/vmlinuz-*; do
+        [[ -f "${kdst}" ]] && sudo cp --remove-destination "${vmlinuz_efi}" "${kdst}"
+    done
+fi
 sudo test -s "${WORK}/mnt/loader/loader.conf"
 
 sudo mkdir -p "${WORK}/mnt/openabl"

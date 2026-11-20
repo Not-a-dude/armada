@@ -82,6 +82,11 @@ select_dtb() {
             return 0
         fi
     fi
+    local fallback="${ARMADA_DEFAULT_DTB:-sm7125-xiaomi-joyeuse-huaxing.dtb}"
+    if [ -f "${dir}/${fallback}" ]; then
+        printf '%s\n' "${fallback}"
+        return 0
+    fi
     printf 'armada-efi-update: cannot pick one DTB (model "%s", compatible "%s") among: %s\n' \
         "${model}" "${compat}" "${all[*]##*/}" >&2
     return 1
