@@ -110,27 +110,25 @@ diff --git a/src/shaders/fs_composite_fast.frag b/src/shaders/fs_composite_fast.
 diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
 --- a/src/rendervulkan.cpp
 +++ b/src/rendervulkan.cpp
-@@ -1999,11 +1999,29 @@ void CVulkanCmdBuffer::drawFullscreen()
+@@ -1999,11 +1999,27 @@ void CVulkanCmdBuffer::drawFullscreen()
  
  	const VkExtent2D extent = { m_target->width(), m_target->height() };
  
-+	const VkImageMemoryBarrier2 toColorAttachment = {
-+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-+		.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-+		.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
-+		.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-+		.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
++	const VkImageMemoryBarrier toColorAttachment = {
++		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
++		.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT,
++		.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
 +		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
 +		.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
++		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 +		.image = m_target->vkImage(),
 +		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
 +	};
-+	const VkDependencyInfo preDep = {
-+		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-+		.imageMemoryBarrierCount = 1,
-+		.pImageMemoryBarriers = &toColorAttachment,
-+	};
-+	m_device->vk.CmdPipelineBarrier2(m_cmdBuffer, &preDep);
++	m_device->vk.CmdPipelineBarrier(m_cmdBuffer,
++		VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
++		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
++		0, 0, nullptr, 0, nullptr, 1, &toColorAttachment);
 +
  	// The shader writes every pixel, so there is nothing to load.
  	VkRenderingAttachmentInfo colorAttachment = {
@@ -141,27 +139,25 @@ diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
  		.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
  		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
  	};
-@@ -2026,6 +2042,24 @@ void CVulkanCmdBuffer::drawFullscreen()
+@@ -2026,6 +2042,22 @@ void CVulkanCmdBuffer::drawFullscreen()
  	m_device->vk.CmdDraw(m_cmdBuffer, 3, 1, 0, 0);
  	m_device->vk.CmdEndRendering(m_cmdBuffer);
  
-+	const VkImageMemoryBarrier2 toGeneral = {
-+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-+		.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-+		.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-+		.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-+		.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
++	const VkImageMemoryBarrier toGeneral = {
++		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
++		.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
++		.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
 +		.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 +		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
++		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 +		.image = m_target->vkImage(),
 +		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
 +	};
-+	const VkDependencyInfo postDep = {
-+		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-+		.imageMemoryBarrierCount = 1,
-+		.pImageMemoryBarriers = &toGeneral,
-+	};
-+	m_device->vk.CmdPipelineBarrier2(m_cmdBuffer, &postDep);
++	m_device->vk.CmdPipelineBarrier(m_cmdBuffer,
++		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
++		VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
++		0, 0, nullptr, 0, nullptr, 1, &toGeneral);
 +
  	markDirty(m_target);
  }
