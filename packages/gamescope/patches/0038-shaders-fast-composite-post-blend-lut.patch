@@ -68,7 +68,7 @@ index 1111111..2222222 100644
  void main() {
      uvec2 coord = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
      vec2 uv = vec2(coord);
-@@ -148,6 +166,13 @@ void main() {
+@@ -148,7 +166,14 @@ void main() {
          result = blendFastLayer(result, li, u_opacity[i]);
      }
  
