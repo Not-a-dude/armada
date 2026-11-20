@@ -23,13 +23,13 @@ diff --git a/src/shaders/vs_composite_blit.vert b/src/shaders/vs_composite_blit.
      vec2 p = vec2(float((gl_VertexIndex << 1) & 2), float(gl_VertexIndex & 2));
      gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 +
-+    vec2 fragCoord = p * vec2(u_outputSize);
++    vec2 pix = p * vec2(u_outputSize) - vec2(0.5);
 +    vec2 uv;
 +    switch (u_rotation) {
-+        case 1u: uv = vec2(float(u_outputSize.y) - fragCoord.y, fragCoord.x); break;
-+        case 2u: uv = vec2(float(u_outputSize.x) - fragCoord.x, float(u_outputSize.y) - fragCoord.y); break;
-+        case 3u: uv = vec2(fragCoord.y, float(u_outputSize.x) - fragCoord.x); break;
-+        default: uv = fragCoord; break;
++        case 1u: uv = vec2(float(u_outputSize.y - 1u) - pix.y, pix.x); break;
++        case 2u: uv = vec2(float(u_outputSize.x - 1u) - pix.x, float(u_outputSize.y - 1u) - pix.y); break;
++        case 3u: uv = vec2(pix.y, float(u_outputSize.x - 1u) - pix.x); break;
++        default: uv = pix; break;
 +    }
 +    v_layer0Uv = (uv + u_offset[0]) * u_scale[0];
  }
