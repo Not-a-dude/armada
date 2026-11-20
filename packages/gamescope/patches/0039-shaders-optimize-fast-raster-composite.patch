@@ -1,7 +1,7 @@
 diff --git a/src/shaders/vs_composite_blit.vert b/src/shaders/vs_composite_blit.vert
 --- a/src/shaders/vs_composite_blit.vert
 +++ b/src/shaders/vs_composite_blit.vert
-@@ -1,10 +1,29 @@
+@@ -1,10 +1,28 @@
  #version 450
  
 -// Fullscreen triangle for the raster composite path. No vertex buffers: the
@@ -36,14 +36,14 @@ diff --git a/src/shaders/vs_composite_blit.vert b/src/shaders/vs_composite_blit.
 diff --git a/src/shaders/fs_composite_fast.frag b/src/shaders/fs_composite_fast.frag
 --- a/src/shaders/fs_composite_fast.frag
 +++ b/src/shaders/fs_composite_fast.frag
-@@ -18,6 +18,7 @@ layout(constant_id = 5) const uint c_output_eotf       = 0;
+@@ -18,5 +18,6 @@ layout(constant_id = 5) const uint c_output_eotf       = 0;
  layout(constant_id = 7) const bool c_itm_enable        = false;
  
 +layout(location = 0) in vec2 v_layer0Uv;
  layout(location = 0) out mediump vec4 outColor;
  
  #include "blit_push_data.h"
-@@ -39,14 +40,21 @@ uvec2 unrotateOutputCoord(uvec2 p, uint rotation) {
+@@ -39,16 +40,23 @@ uvec2 unrotateOutputCoord(uvec2 p, uint rotation) {
      }
  }
  
@@ -70,7 +70,7 @@ diff --git a/src/shaders/fs_composite_fast.frag b/src/shaders/fs_composite_fast.
 +}
  
  mediump vec4 blendFastLayer(mediump vec4 dstCol, mediump vec4 srcCol, mediump float opacity) {
-@@ -80,22 +88,24 @@ mediump vec3 perform_3dlut_fast(mediump vec3 color, sampler3D lut) {
+@@ -80,27 +88,28 @@ mediump vec3 perform_3dlut_fast(mediump vec3 color, sampler3D lut) {
  }
  
  void main() {
@@ -110,7 +110,7 @@ diff --git a/src/shaders/fs_composite_fast.frag b/src/shaders/fs_composite_fast.
 diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
 --- a/src/rendervulkan.cpp
 +++ b/src/rendervulkan.cpp
-@@ -1999,6 +1999,22 @@ void CVulkanCmdBuffer::drawFullscreen()
+@@ -1999,11 +1999,29 @@ void CVulkanCmdBuffer::drawFullscreen()
  
  	const VkExtent2D extent = { m_target->width(), m_target->height() };
  
@@ -166,7 +166,7 @@ diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
  	markDirty(m_target);
  }
  
-@@ -4876,9 +4910,16 @@
+@@ -4876,10 +4910,16 @@
  		cmdBuffer->bindGraphicsPipeline( g_device.pipeline(fsType, frameInfo->layers.count(), frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF, false, eAttachmentFormat ));
  		bind_all_layers(cmdBuffer.get(), frameInfo);
  		cmdBuffer->bindTarget(compositeImage);
