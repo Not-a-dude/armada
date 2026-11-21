@@ -467,7 +467,7 @@
 
 &pm6150_resin {
 	linux,code = <KEY_VOLUMEDOWN>;
-	status = "disabled";
+	status = "okay";
 };
 
 &pm6150_rtc {
@@ -921,11 +921,93 @@
 				sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
 			};
 
+			codec {
+				sound-dai = <&wcd937x 1>, <&swr2 0>, <&txmacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+		};
+
+		rx-dai-link {
+			link-name = "RX Codec DMA Playback";
+
+			cpu {
+				sound-dai = <&q6afedai RX_CODEC_DMA_RX_0>;
+			};
+
+			codec {
+				sound-dai = <&wcd937x 0>, <&swr1 0>, <&rxmacro 0>;
+			};
+
 			platform {
 				sound-dai = <&q6routing>;
 			};
 		};
 	};
+
+	wcd937x: codec {
+		compatible = "qcom,wcd9375-codec";
+
+		reset-gpios = <&tlmm 58 GPIO_ACTIVE_LOW>;
+
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&wcd_reset_n>;
+		pinctrl-1 = <&wcd_reset_n_sleep>;
+
+		vdd-buck-supply = <&vreg_l15a_1p8>;
+		vdd-rxtx-supply = <&vreg_l10a_1p8>;
+		vdd-px-supply = <&vreg_l10a_1p8>;
+		vdd-mic-bias-supply = <&vreg_bob>;
+
+		qcom,micbias1-microvolt = <1800000>;
+		qcom,micbias2-microvolt = <1800000>;
+		qcom,micbias3-microvolt = <1800000>;
+		qcom,micbias4-microvolt = <1800000>;
+		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
+		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
+		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
+		qcom,rx-device = <&wcd_rx>;
+		qcom,tx-device = <&wcd_tx>;
+
+		#sound-dai-cells = <1>;
+	};
+};
+
+&swr1 {
+	status = "okay";
+
+	wcd_rx: codec@0,4 {
+		compatible = "sdw20217010a00";
+		reg = <0 4>;
+
+		qcom,rx-port-mapping = <1 2 3 4 5>;
+	};
+};
+
+&swr2 {
+	status = "okay";
+
+	wcd_tx: codec@0,3 {
+		compatible = "sdw20217010a00";
+		reg = <0 3>;
+
+		qcom,tx-port-mapping = <2 3 4 5>;
+	};
+};
+
+&rxmacro {
+	status = "okay";
+};
+
+&txmacro {
+	status = "okay";
+};
+
+&vamacro {
+	qcom,dmic-sample-rate = <600000>;
+	status = "okay";
 };
 
 &qfprom {
