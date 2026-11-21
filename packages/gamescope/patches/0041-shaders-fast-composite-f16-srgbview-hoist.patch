@@ -1,42 +1,8 @@
 diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
-index 7556e9e..7e3df4b 100644
+index 7556e9e..3b647d2 100644
 --- a/src/rendervulkan.cpp
 +++ b/src/rendervulkan.cpp
-@@ -4438,7 +4438,7 @@ struct NisPushData_t
- };
- #pragma pack(pop)
- 
--void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *frameInfo)
-+void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *frameInfo, bool bForceRawSrgb = false)
- {
- 	for ( int i = 0; i < frameInfo->layers.count(); i++ )
- 	{
-@@ -4449,7 +4449,7 @@ void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *fram
-                     || (layer->filter == GamescopeUpscaleFilter::LINEAR && !layer->viewConvertsToLinearAutomatically());
- 
- 		cmdBuffer->bindTexture(i, layer->tex);
--		cmdBuffer->setTextureSrgb(i, layer->colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR);
-+		cmdBuffer->setTextureSrgb(i, bForceRawSrgb || layer->colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR);
- 		cmdBuffer->setSamplerNearest(i, nearest);
- 		cmdBuffer->setSamplerUnnormalized(i, true);
- 	}
-@@ -4927,13 +4927,11 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
- 			frameInfo->layers.count() > 0;
- 		if ( bHoistColorMgmt )
- 		{
--			const GamescopeAppTextureColorspace eCS = frameInfo->layers.get( 0 ).colorspace;
--			if ( eCS != GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB && eCS != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR )
--				bHoistColorMgmt = false;
- 			for ( int i = 0; i < frameInfo->layers.count() && bHoistColorMgmt; i++ )
- 			{
- 				const FrameInfo_t::Layer_t &layer = frameInfo->layers.get( i );
--				if ( !layer.applyColorMgmt || layer.colorspace != eCS )
-+				if ( layer.colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB &&
-+				     layer.colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR )
- 					bHoistColorMgmt = false;
- 			}
- 		}
-@@ -4942,7 +4940,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+@@ -4942,7 +4942,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
  		for ( int i = 0; i < frameInfo->layers.count() && bFastFiltersOk; i++ )
  		{
  			const FrameInfo_t::Layer_t &layer = frameInfo->layers.get( i );
@@ -45,17 +11,8 @@ index 7556e9e..7e3df4b 100644
  				bFastFiltersOk = false;
  		}
  		const bool bCanUseFastFs = ( outputTF == EOTF_Gamma22 || outputTF == EOTF_Count ) &&
-@@ -4952,7 +4950,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
- 		const ShaderType fsType = bCanUseFastFs ? SHADER_TYPE_BLIT_FAST_FS : SHADER_TYPE_BLIT_FS;
- 		cmdBuffer->setLut3DLinear( bCanUseFastFs && !bNoLuts );
- 		cmdBuffer->bindGraphicsPipeline( g_device.pipeline(fsType, frameInfo->layers.count(), frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF, false, eAttachmentFormat ));
--		bind_all_layers(cmdBuffer.get(), frameInfo);
-+		bind_all_layers(cmdBuffer.get(), frameInfo, bCanUseFastFs);
- 		cmdBuffer->bindTarget(compositeImage);
- 		uint32_t uCtmMask = 0;
- 		uint32_t uClipMask = 0;
 diff --git a/src/shaders/fs_composite_fast.frag b/src/shaders/fs_composite_fast.frag
-index 0d55e59..9099bca 100644
+index 0d55e59..f29e041 100644
 --- a/src/shaders/fs_composite_fast.frag
 +++ b/src/shaders/fs_composite_fast.frag
 @@ -23,10 +23,10 @@ layout(location = 0) out mediump vec4 outColor;
@@ -87,24 +44,16 @@ index 0d55e59..9099bca 100644
  }
  
  mediump vec4 sampleFastLayer(uint layerIdx, vec2 uv) {
-@@ -57,15 +52,7 @@ mediump vec4 blendFastLayer(mediump vec4 dstCol, mediump vec4 srcCol, mediump fl
-     return srcCol * opacity + dstCol * (1.0 - layerAlpha);
+@@ -65,7 +60,7 @@ mediump vec3 linearToSrgbFast(mediump vec3 color) {
+     return mix(hiPart, loPart, isLo);
  }
  
--mediump vec3 linearToSrgbFast(mediump vec3 color) {
--    color = max(color, vec3(0.0));
--    bvec3 isLo = lessThanEqual(color, vec3(0.0031308));
--    mediump vec3 loPart = color * 12.92;
--    mediump vec3 hiPart = pow(color, vec3(5.0 / 12.0)) * 1.055 - 0.055;
--    return mix(hiPart, loPart, isLo);
--}
--
 -mediump vec3 perform_3dlut_fast(mediump vec3 color, sampler3D lut) {
 +mediump vec3 perform_3dlut_fast(mediump vec3 color, mediump sampler3D lut) {
      // 3D LUT edge size is 17 (s_nLutEdgeSize3d). Avoid per-pixel resinfo.
      // Axes are stored in RGB order (matching perform_3dlut_tetrahedral baseInd.zyx).
      const float scale = 16.0 / 17.0;
-@@ -76,12 +63,15 @@ mediump vec3 perform_3dlut_fast(mediump vec3 color, sampler3D lut) {
+@@ -76,12 +71,15 @@ mediump vec3 perform_3dlut_fast(mediump vec3 color, sampler3D lut) {
  
  void main() {
      mediump vec4 result = vec4(0.0);
@@ -123,18 +72,3 @@ index 0d55e59..9099bca 100644
      }
  
      for (int i = 2; i < c_layerCount; i++) {
-@@ -90,12 +80,9 @@ void main() {
-     }
- 
-     if ((u_hoistColorMgmt & 1u) != 0u) {
--        // For Gamma22 -> Gamma22 with gain=1, applyShaper() in color_helpers.cpp
--        // is an exact identity, so skip the 3x 1D shaper LUT fetches.
--        result.rgb = linearToSrgbFast(result.rgb);
-+        // Inputs are bound as raw sRGB (_UNORM) views in fast mode, so skip
-+        // linearToSrgbFast() and feed directly into the 3D LUT.
-         result.rgb = perform_3dlut_fast(result.rgb, s_lut3D[0]);
--    } else if (c_output_eotf == 0u) {
--        result.rgb = linearToSrgbFast(result.rgb);
-     }
- 
-     outColor = result;
