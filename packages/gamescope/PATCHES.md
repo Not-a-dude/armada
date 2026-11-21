@@ -82,4 +82,11 @@ to a commit, or `armada` if it's original; a URL source with no `notes` is verba
   layers share one SRGB/LINEAR colourspace the chain runs once post-blend,
   and identity LUTs are left unbound.
 
+- `patches/0041-shaders-fast-composite-f16-srgbview-hoist.patch`
+  source: armada
+  notes: Uses raw sRGB (_UNORM) texture views, mediump samplers/opacity, and
+  removes per-layer CTM and linearToSrgbFast() in fs_composite_fast.frag,
+  while allowing mixed SRGB/LINEAR layers and non-color-managed overlays in
+  the fast raster composite path (layers with CTM still fall back to blit).
+
 
