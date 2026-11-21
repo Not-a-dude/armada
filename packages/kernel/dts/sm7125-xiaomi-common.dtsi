@@ -913,6 +913,18 @@
 				sound-dai = <&tas2562>;
 			};
 		};
+
+		tx-dai-link {
+			link-name = "TX Codec DMA Capture";
+
+			cpu {
+				sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+		};
 	};
 };
 
