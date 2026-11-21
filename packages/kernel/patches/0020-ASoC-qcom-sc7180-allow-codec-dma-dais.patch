@@ -1,8 +1,9 @@
 From: Armada <armada@example.com>
 Subject: [PATCH] ASoC: qcom: sc7180: allow RX_CODEC_DMA_RX_0 and TX_CODEC_DMA_TX_3 in sc7180_qdsp_init
 
-Allow RX_CODEC_DMA_RX_0 and TX_CODEC_DMA_TX_3 DAI IDs in sc7180_qdsp_init()
-so qcom,sc7180-qdsp6-sndcard can probe with WCD937x codec DMA links on SM7125.
+Allow RX_CODEC_DMA_RX_0 and TX_CODEC_DMA_TX_3 DAI IDs in sc7180_qdsp_init(),
+sc7180_qdsp_snd_startup(), and sc7180_qdsp_snd_shutdown()
+so qcom,sc7180-qdsp6-sndcard can probe and operate with WCD937x codec DMA links on SM7125.
 
 --- a/sound/soc/qcom/sc7180.c
 +++ b/sound/soc/qcom/sc7180.c
@@ -15,3 +16,21 @@ so qcom,sc7180-qdsp6-sndcard can probe with WCD937x codec DMA links on SM7125.
  		return 0;
  	case DISPLAY_PORT_RX:
  		return sc7180_hdmi_init(rtd);
+@@ -275,6 +277,8 @@ static int sc7180_qdsp_snd_startup(struct snd_pcm_substream *substream)
+ 		snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_BP_FP);
+ 		break;
+ 	case DISPLAY_PORT_RX:
++	case RX_CODEC_DMA_RX_0:
++	case TX_CODEC_DMA_TX_3:
+ 		break;
+ 	default:
+ 		dev_err(rtd->dev, "%s: invalid dai id 0x%x\n", __func__,
+@@ -362,6 +366,8 @@ static void sc7180_qdsp_snd_shutdown(struct snd_pcm_substream *substream)
+ 				       SNDRV_PCM_STREAM_PLAYBACK);
+ 		break;
+ 	case DISPLAY_PORT_RX:
++	case RX_CODEC_DMA_RX_0:
++	case TX_CODEC_DMA_TX_3:
+ 		break;
+ 	default:
+ 		dev_err(rtd->dev, "%s: invalid dai id 0x%x\n", __func__,

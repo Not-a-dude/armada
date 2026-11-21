@@ -869,10 +869,18 @@
 
 / {
 	sound: sound {
-		compatible = "qcom,sc7180-qdsp6-sndcard";
+		compatible = "qcom,sm8250-sndcard";
 		pinctrl-0 = <&ter_mi2s_active>;
 		pinctrl-names = "default";
 		model = "xiaomi-miatoll";
+		audio-routing =
+			"IN1_HPHL", "HPHL_OUT",
+			"IN2_HPHR", "HPHR_OUT",
+			"AMIC1", "MIC BIAS1",
+			"AMIC2", "MIC BIAS2",
+			"AMIC3", "MIC BIAS3",
+			"TX SWR_ADC0", "ADC1_OUTPUT",
+			"TX SWR_ADC2", "ADC2_OUTPUT";
 
 		multimedia1-dai-link {
 			link-name = "MultiMedia1";
