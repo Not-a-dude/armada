@@ -1412,7 +1412,7 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_fg.c linux/drivers/power/supply
 diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers/power/supply/qcom_pm8150b_charger.c
 --- linux.orig/drivers/power/supply/qcom_pm8150b_charger.c	1970-01-01 00:00:00.000000000 +0000
 +++ linux/drivers/power/supply/qcom_pm8150b_charger.c	2025-09-29 13:35:08.289792859 +0000
-@@ -0,0 +1,1142 @@
+@@ -0,0 +1,1148 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Copyright (c) 2024, Teguh Sobirin <teguh@sobir.in>.
