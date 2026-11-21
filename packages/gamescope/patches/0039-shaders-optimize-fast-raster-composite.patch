@@ -273,45 +273,22 @@ diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
  }
 --- a/src/shaders/fs_composite_fast.frag
 +++ b/src/shaders/fs_composite_fast.frag
-@@ -5,70 +5,97 @@
+@@ -16,6 +16,9 @@
+ layout(constant_id = 5) const uint c_output_eotf       = 0;
+ layout(constant_id = 7) const bool c_itm_enable        = false;
  
- #include "descriptor_set_constants.h"
- 
--precision mediump float;
--precision mediump int;
-+precision highp float;
-+precision highp int;
- 
--layout(constant_id = 0) const int  c_layerCount   = 1;
--layout(constant_id = 1) const uint c_ycbcrMask    = 0;
-+layout(constant_id = 0) const int  c_layerCount        = 1;
-+layout(constant_id = 1) const uint c_ycbcrMask         = 0;
- layout(constant_id = 2) const uint c_compositing_debug = 0;
--layout(constant_id = 3) const int  c_blur_layer_count = 0;
--layout(constant_id = 4) const uint c_colorspaceMask = 0;
--layout(constant_id = 5) const uint c_output_eotf = 0;
--layout(constant_id = 7) const bool c_itm_enable = false;
--
--layout(location = 0) out vec4 outColor;
-+layout(constant_id = 3) const int  c_blur_layer_count  = 0;
-+layout(constant_id = 4) const uint c_colorspaceMask    = 0;
-+layout(constant_id = 5) const uint c_output_eotf       = 0;
-+layout(constant_id = 7) const bool c_itm_enable        = false;
-+
 +layout(location = 0) in vec2 v_layer0Uv;
 +layout(location = 1) in vec2 v_layer1Uv;
 +layout(location = 2) in vec2 v_uv;
-+layout(location = 0) out mediump vec4 outColor;
+ layout(location = 0) out mediump vec4 outColor;
  
  #include "blit_push_data.h"
+@@ -25,28 +28,28 @@
+ layout(binding = 5) uniform sampler1D s_shaperLut[VKR_LUT3D_COUNT];
+ layout(binding = 6) uniform sampler3D s_lut3D[VKR_LUT3D_COUNT];
  
- layout(binding = 3) uniform sampler2D s_samplers[VKR_SAMPLER_SLOTS];
- layout(binding = 4) uniform sampler2D s_ycbcr_samplers[VKR_SAMPLER_SLOTS];
-+layout(binding = 5) uniform sampler1D s_shaperLut[VKR_LUT3D_COUNT];
-+layout(binding = 6) uniform sampler3D s_lut3D[VKR_LUT3D_COUNT];
- 
--// Inverse of rotateOutputCoord(): maps a physical (scanout) pixel back to the
--// logical pixel that the compute path would have stored there.
+-// Inverse of rotateOutputCoord(): highp integer coordinates to avoid FP16
+-// quantization on panels wider/taller than 1024px (e.g. 1080x2400).
 -uvec2 unrotateOutputCoord(uvec2 p, uint rotation) {
 -    uvec2 size = u_outputSize;
 -    switch (rotation) {
@@ -329,85 +306,87 @@ diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
 +            mediump float border = (u_borderMask & (1u << layerIdx)) != 0u ? 1.0 : 0.0;
 +            return vec4(0.0, 0.0, 0.0, border);
 +        }
-+    }
+     }
 +    mediump vec4 color = textureLod(s_samplers[layerIdx], coord, 0.0);
 +    // Bit (8 + layerIdx) of u_hoistColorMgmt indicates a non-identity CTM.
 +    if ((u_hoistColorMgmt & (1u << (8u + layerIdx))) != 0u) {
 +        color.rgb = vec4(color.rgb, 1.0) * u_ctm[layerIdx];
-     }
++    }
 +    return color;
  }
  
--vec4 sampleFastLayer(uint layerIdx, vec2 uv) {
-+mediump vec4 sampleFastLayer(uint layerIdx, vec2 uv) {
+ mediump vec4 sampleFastLayer(uint layerIdx, vec2 uv) {
      vec2 coord = (uv + u_offset[layerIdx]) * u_scale[layerIdx];
--    if ((c_ycbcrMask & (1u << layerIdx)) != 0u) {
--        return texture(s_ycbcr_samplers[layerIdx], coord);
--    } else {
--        return texture(s_samplers[layerIdx], coord);
+-    vec2 texSize = vec2(textureSize(s_samplers[layerIdx], 0));
+-    if (coord.x < 0.0 || coord.y < 0.0 || coord.x >= texSize.x || coord.y >= texSize.y) {
+-        mediump float border = (u_borderMask & (1u << layerIdx)) != 0u ? 1.0 : 0.0;
+-        return vec4(0.0, 0.0, 0.0, border);
 -    }
+-    mediump vec4 color = textureLod(s_samplers[layerIdx], coord, 0.0);
+-    color.rgb = vec4(color.rgb, 1.0) * u_ctm[layerIdx];
+-    return color;
 +    return sampleFastLayerCoord(layerIdx, coord);
  }
  
--vec4 blendFastLayer(vec4 dstCol, vec4 srcCol, float opacity) {
--    srcCol *= opacity;
--    // Standard premultiplied blend: dst * (1 - src.a) + src
--    return dstCol * (1.0 - srcCol.a) + srcCol;
-+mediump vec4 blendFastLayer(mediump vec4 dstCol, mediump vec4 srcCol, mediump float opacity) {
-+    mediump float layerAlpha = opacity * srcCol.a;
-+    return srcCol * opacity + dstCol * (1.0 - layerAlpha);
+ mediump vec4 blendFastLayer(mediump vec4 dstCol, mediump vec4 srcCol, mediump float opacity) {
+@@ -62,44 +65,34 @@
+     return mix(hiPart, loPart, isLo);
  }
  
--void main() {
--    uvec2 coord = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
--    vec2 uv = vec2(coord);
-+mediump vec3 linearToSrgbFast(mediump vec3 color) {
-+    color = max(color, vec3(0.0));
-+    bvec3 isLo = lessThanEqual(color, vec3(0.0031308));
-+    mediump vec3 loPart = color * 12.92;
-+    mediump vec3 hiPart = pow(color, vec3(5.0 / 12.0)) * 1.055 - 0.055;
-+    return mix(hiPart, loPart, isLo);
-+}
- 
--    vec4 result = sampleFastLayer(0u, uv) * u_opacity[0];
-+mediump vec3 perform_3dlut_fast(mediump vec3 color, sampler3D lut) {
+-mediump vec3 perform_1dlut_fast(mediump vec3 color, sampler1D lut) {
+-    float size = float(textureSize(lut, 0));
+-    float offset = 0.5 / size;
+-    vec3 c = clamp(vec3(color), 0.0, 1.0) * (1.0 - 2.0 * offset) + offset;
+-    return vec3(
+-        textureLod(lut, c.r, 0.0).r,
+-        textureLod(lut, c.g, 0.0).g,
+-        textureLod(lut, c.b, 0.0).b
+-    );
+-}
+-
+ mediump vec3 perform_3dlut_fast(mediump vec3 color, sampler3D lut) {
+-    // 3D LUT axes are stored in BGR order (x=B, y=G, z=R), matching
+-    // perform_3dlut_tetrahedral. Sampled with hardware VK_FILTER_LINEAR.
+-    float size = float(textureSize(lut, 0).x);
+-    float offset = 0.5 / size;
+-    vec3 c = clamp(vec3(color.rgb), 0.0, 1.0) * (1.0 - 2.0 * offset) + offset;
 +    // 3D LUT edge size is 17 (s_nLutEdgeSize3d). Avoid per-pixel resinfo.
 +    // Axes are stored in RGB order (matching perform_3dlut_tetrahedral baseInd.zyx).
 +    const float scale = 16.0 / 17.0;
 +    const float offset = 0.5 / 17.0;
 +    vec3 c = clamp(vec3(color.rgb), 0.0, 1.0) * scale + offset;
-+    return textureLod(lut, c, 0.0).rgb;
-+}
-+
-+void main() {
-+    mediump vec4 result = vec4(0.0);
-+    if (c_layerCount > 0)
+     return textureLod(lut, c, 0.0).rgb;
+ }
+ 
+ void main() {
+-    uvec2 coord = unrotateOutputCoord(uvec2(gl_FragCoord.xy), u_rotation);
+-    vec2 uv = vec2(coord);
+-
+     mediump vec4 result = vec4(0.0);
+     if (c_layerCount > 0)
+-        result = sampleFastLayer(0u, uv) * u_opacity[0];
 +        result = sampleFastLayerCoord(0u, v_layer0Uv) * u_opacity[0];
- 
-     if (c_layerCount > 1) {
--        vec4 l1 = sampleFastLayer(1u, uv);
++
++    if (c_layerCount > 1) {
 +        mediump vec4 l1 = sampleFastLayerCoord(1u, v_layer1Uv);
-         result = blendFastLayer(result, l1, u_opacity[1]);
-     }
++        result = blendFastLayer(result, l1, u_opacity[1]);
++    }
  
--    if (c_layerCount > 2) {
--        vec4 l2 = sampleFastLayer(2u, uv);
--        result = blendFastLayer(result, l2, u_opacity[2]);
+-    for (int i = 1; i < c_layerCount; i++) {
+-        mediump vec4 li = sampleFastLayer(uint(i), uv);
 +    for (int i = 2; i < c_layerCount; i++) {
 +        mediump vec4 li = sampleFastLayer(uint(i), v_uv);
-+        result = blendFastLayer(result, li, u_opacity[i]);
+         result = blendFastLayer(result, li, u_opacity[i]);
      }
  
--    for (int i = 3; i < c_layerCount; i++) {
--        vec4 li = sampleFastLayer(uint(i), uv);
--        result = blendFastLayer(result, li, u_opacity[i]);
+-    if (u_hoistColorMgmt != 0u) {
+-        // Shaper LUT expects sRGB-encoded input; 3D LUT outputs display Gamma 2.2
+-        // encoding directly (skipping the redundant srgbToLinear -> linearToSrgb pair).
 +    if ((u_hoistColorMgmt & 1u) != 0u) {
 +        // For Gamma22 -> Gamma22 with gain=1, applyShaper() in color_helpers.cpp
 +        // is an exact identity, so skip the 3x 1D shaper LUT fetches.
-+        result.rgb = linearToSrgbFast(result.rgb);
-+        result.rgb = perform_3dlut_fast(result.rgb, s_lut3D[0]);
-+    } else if (c_output_eotf == 0u) {
-+        result.rgb = linearToSrgbFast(result.rgb);
-     }
- 
-     outColor = result;
+         result.rgb = linearToSrgbFast(result.rgb);
+-        result.rgb = perform_1dlut_fast(result.rgb, s_shaperLut[0]);
+         result.rgb = perform_3dlut_fast(result.rgb, s_lut3D[0]);
+     } else if (c_output_eotf == 0u) {
+         result.rgb = linearToSrgbFast(result.rgb);
