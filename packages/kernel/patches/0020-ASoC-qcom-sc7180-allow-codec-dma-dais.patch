@@ -1,0 +1,17 @@
+From: Armada <armada@example.com>
+Subject: [PATCH] ASoC: qcom: sc7180: allow RX_CODEC_DMA_RX_0 and TX_CODEC_DMA_TX_3 in sc7180_qdsp_init
+
+Allow RX_CODEC_DMA_RX_0 and TX_CODEC_DMA_TX_3 DAI IDs in sc7180_qdsp_init()
+so qcom,sc7180-qdsp6-sndcard can probe with WCD937x codec DMA links on SM7125.
+
+--- a/sound/soc/qcom/sc7180.c
++++ b/sound/soc/qcom/sc7180.c
+@@ -144,6 +144,8 @@ static int sc7180_qdsp_init(struct snd_soc_pcm_runtime *rtd)
+ 		return sc7180_headset_init(rtd);
+ 	case PRIMARY_MI2S_TX:
+ 	case TERTIARY_MI2S_RX:
++	case RX_CODEC_DMA_RX_0:
++	case TX_CODEC_DMA_TX_3:
+ 		return 0;
+ 	case DISPLAY_PORT_RX:
+ 		return sc7180_hdmi_init(rtd);
