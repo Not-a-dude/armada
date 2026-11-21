@@ -168,6 +168,7 @@ export interface Config {
   envPresets: EnvPreset[];
   perf?: PerfInfo;
   cpuDeviceClass: string;
+  deviceId: string;
   rgbSupported: boolean;
   protonDefaults: string[];
   osVersion: string;

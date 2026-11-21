@@ -17,6 +17,7 @@ import { ArmadaModalRoot } from "../components/ArmadaModalRoot";
 import { getCurrentLocale, t, translateLabel } from "../i18n";
 import { findPreset, localized, resolveEnvValues } from "../lib/envPresets";
 import { getGlobalResolution, setGlobalResolution } from "../lib/steamSettings";
+import { resolutionOptions } from "../lib/resolutionOptions";
 import { clone } from "../lib/util";
 import { availableGames, editTargetOptions } from "../lib/games";
 import {
@@ -65,12 +66,6 @@ function cpulistError(text: string, cpuCount: number): string {
   return seen.size ? "" : t("compatibility.enterCores");
 }
 
-const resolutionOptions = [
-  { data: "Default", label: "Default" },
-  { data: "Native", label: "Native" },
-  { data: "1280x720", label: "1280x720" },
-  { data: "960x540", label: "960x540" },
-];
 const fexKnobs = [
   { key: "TSOEnabled", label: "TSO Enabled" },
   { key: "X87ReducedPrecision", label: "X87 Reduced Precision" },
@@ -281,6 +276,7 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
     && !compatTools.some((tool) => tool.id === globalTool);
   const activeGlobalTool = !globalTool || globalToolMissing ? resolvedDefaultTool : globalTool;
   const runtimeGame = config.game;
+  const gameResolutionOptions = resolutionOptions(config.deviceId);
   const games = availableGames(config);
   const selectedGame = config.selectedGame || runtimeGame || null;
   const game = selectedGame;
@@ -880,12 +876,12 @@ export function Compatibility({ config, setConfig }: { config: Config; setConfig
                 }}
               />
             )}
-            <SelectEdit label={t("compatibility.gameResolution")} value={defaultResolution} options={resolutionOptions.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamDefaultResolution} />
+            <SelectEdit label={t("compatibility.gameResolution")} value={defaultResolution} options={gameResolutionOptions.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamDefaultResolution} />
           </>
         ) : (
           <>
             <SelectEdit label={t("compatibility.tool")} value={currentTool} options={perGameToolOptions} onChange={onSelectPerGameTool} />
-            <SelectEdit label={t("compatibility.gameResolution")} value={resolution} options={resolutionOptions.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamResolution} />
+            <SelectEdit label={t("compatibility.gameResolution")} value={resolution} options={gameResolutionOptions.map((option) => ({ ...option, label: translateLabel(option.label) }))} onChange={setSteamResolution} />
           </>
         )}
         {resolutionMessage ? <Field label={t("common.status")} description={resolutionMessage} /> : null}
