@@ -555,7 +555,7 @@
 &remoteproc_adsp {
 	memory-region = <&adsp_mem>;
 	firmware-name = "qcom/sm7125/miatoll/adsp.mbn";
-	status = "disabled";
+	status = "okay";
 };
 
 &remoteproc_mpss {
@@ -786,7 +786,7 @@
 };
 
 &i2c9 {
-	status = "disabled";
+	status = "okay";
 	clock-frequency = <100000>;
 
 	tas2562: codec@4c {
@@ -864,6 +864,55 @@
 
 	dai@2 {
 		reg = <2>;
+	};
+};
+
+/ {
+	sound: sound {
+		compatible = "qcom,sc7180-qdsp6-sndcard";
+		pinctrl-0 = <&ter_mi2s_active>;
+		pinctrl-names = "default";
+		model = "xiaomi-miatoll";
+
+		multimedia1-dai-link {
+			link-name = "MultiMedia1";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+			};
+		};
+
+		multimedia2-dai-link {
+			link-name = "MultiMedia2";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+			};
+		};
+
+		multimedia3-dai-link {
+			link-name = "MultiMedia3";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
+			};
+		};
+
+		tertiary-rx-dai-link {
+			link-name = "Tertiary MI2S Playback";
+
+			cpu {
+				sound-dai = <&q6afedai TERTIARY_MI2S_RX>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				sound-dai = <&tas2562>;
+			};
+		};
 	};
 };
 
