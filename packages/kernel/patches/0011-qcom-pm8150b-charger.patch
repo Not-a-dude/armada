@@ -1,3 +1,4 @@
+Float voltage and charge current: xenocideend (with Claude Opus 5.5) <xenocideend@gmail.com>
 diff -rupbN linux.orig/drivers/power/supply/Kconfig linux/drivers/power/supply/Kconfig
 --- linux.orig/drivers/power/supply/Kconfig	2025-09-29 12:48:19.609606572 +0000
 +++ linux/drivers/power/supply/Kconfig	2025-09-29 12:52:27.826638655 +0000
@@ -1845,7 +1846,7 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +		return rc;
 +	}
 +
-+	if (stat[1] & VBATT_GTET_INHIBIT_BIT) {
++	if (stat[1] & CHARGER_ERROR_STATUS_BAT_OV_BIT) {
 +		*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
 +		return 0;
 +	}
@@ -1859,13 +1860,13 @@ diff -rupbN linux.orig/drivers/power/supply/qcom_pm8150b_charger.c linux/drivers
 +	case TAPER_CHARGE:
 +		*val = POWER_SUPPLY_STATUS_CHARGING;
 +		return rc;
-+	case TERMINATE_CHARGE:
-+		*val = POWER_SUPPLY_STATUS_FULL;
-+		return rc;
-+	case INHIBIT_CHARGE:
 +	case PAUSE_CHARGE:
 +	case DISABLE_CHARGE:
 +		*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
++		return rc;
++	case TERMINATE_CHARGE:
++	case INHIBIT_CHARGE:
++		*val = POWER_SUPPLY_STATUS_FULL;
 +		return rc;
 +	default:
 +		*val = POWER_SUPPLY_STATUS_UNKNOWN;
