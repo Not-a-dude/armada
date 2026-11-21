@@ -144,6 +144,7 @@ if [[ "${ARMADA_DEVICE_ID:-}" == "xiaomi-joyeuse" ]]; then
     export STEAM_GAMESCOPE_VRR_SUPPORTED=0
     export GAMESCOPE_COMPOSITE_RASTER=1
     export GAMESCOPE_PREFER_8BIT_OUTPUT=1
+    export GAMESCOPE_NO_BLANK_OVERLAY_LAYER=1
 fi
 
 if command -v kwriteconfig6 >/dev/null; then
