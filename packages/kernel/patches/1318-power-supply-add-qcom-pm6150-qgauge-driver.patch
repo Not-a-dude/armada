@@ -4,17 +4,16 @@ The PM6150 QGauge (PMIC battery fuel gauge) driver was removed from
 upstream along with its PM6150 DT bindings, so sm7125 devices (Xiaomi
 joyeuse/curtana) lost battery reporting entirely.
 
-Bring back the driver (ported from 6.14) with the local capacity model for
-the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
+Bring back the driver (ported from 6.14) with a kernel-side charge counter
+and the J6B NVT 5020 mAh profile, and register it in Kconfig/Makefile.
 
 --- a/drivers/power/supply/qcom_qg.c
 +++ b/drivers/power/supply/qcom_qg.c
-@@ -0,0 +1,686 @@
+@@ -0,0 +1,947 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Copyright (c) 2024, Danila Tikhonov <danila@jiaxyga.com>
-+ * Enhanced for Xiaomi Joyeuse (PM6150) ATL 5020 mAh battery chemistry,
-+ * IR-compensated OCV capacity, hardware VBUS detection, and SDAM sync.
++ * Xiaomi Joyeuse PM6150 battery gauge with kernel-side charge tracking.
 + */
 +
 +#include <linux/iio/consumer.h>
@@ -31,8 +30,13 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +#include <linux/workqueue.h>
 +#include <linux/jiffies.h>
 +#include <linux/fs.h>
++#include <linux/mutex.h>
++#include <linux/timekeeping.h>
 +
 +/* BATT offsets */
++#define QG_PERPH_SUBTYPE_REG		0x05
++#define QG_ADC_IBAT_5A			0x03
++#define QG_ADC_IBAT_10A			0x04
 +#define QG_S2_NORMAL_AVG_V_DATA0_REG	0x80 /* 2-byte 0x80-0x81 */
 +#define QG_S2_NORMAL_AVG_I_DATA0_REG	0x82 /* 2-byte 0x82-0x83 */
 +#define QG_LAST_ADC_V_DATA0_REG		0xc0 /* 2-byte 0xc0-0xc1 */
@@ -50,11 +54,15 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +#define PM6150_USBIN_PLUGIN_RT_STS_BIT	BIT(4)
 +
 +#define TCPM_PREFIX			"tcpm-source-psy-"
-+#define QG_REFRESH_MS			1000
++#define QG_REFRESH_MS			5000
++#define QG_CAPACITY_UAH		5020000
++#define QG_CENTIPCT_UAS		(QG_CAPACITY_UAH * 3600LL / 10000)
++#define QG_REST_CURRENT_UA		100000
++#define QG_REST_TIME_S			600
 +
 +/*
-+ * ATL 5020 mAh joyeuse OCV-vs-SoC profile, transcribed from the OEM
-+ * downstream `qcom,pc-temp-v1-lut` in atl-5020.dtsi. 56 SoC rows x 5
++ * J6B NVT 5020 mAh OCV-vs-SoC profile, from the OEM
++ * downstream `qcom,pc-temp-v1-lut`. 56 SoC rows x 5
 + * temperature columns (0, 10, 25, 40, 50 degC). OCV in mV.
 + */
 +#define ATL5020_SOC_ROWS   56
@@ -78,6 +86,65 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +static const s16 atl5020_temp_dc[ATL5020_TEMP_COLS] = { 0, 100, 250, 400, 500 };
 +
 +static const u16 atl5020_ocv_mv[ATL5020_SOC_ROWS * ATL5020_TEMP_COLS] = {
++	/* 100% */ 4417, 4428, 4435, 4438, 4439,
++	/*  98% */ 4394, 4404, 4411, 4411, 4410,
++	/*  96% */ 4371, 4381, 4388, 4388, 4387,
++	/*  94% */ 4347, 4359, 4365, 4366, 4365,
++	/*  92% */ 4324, 4336, 4343, 4344, 4343,
++	/*  90% */ 4300, 4313, 4321, 4322, 4321,
++	/*  88% */ 4276, 4289, 4297, 4299, 4299,
++	/*  86% */ 4252, 4265, 4273, 4275, 4275,
++	/*  84% */ 4227, 4241, 4249, 4251, 4251,
++	/*  82% */ 4204, 4216, 4224, 4227, 4227,
++	/*  80% */ 4181, 4193, 4200, 4203, 4202,
++	/*  78% */ 4159, 4169, 4176, 4179, 4179,
++	/*  76% */ 4137, 4147, 4153, 4155, 4155,
++	/*  74% */ 4115, 4125, 4131, 4132, 4132,
++	/*  72% */ 4095, 4104, 4108, 4110, 4110,
++	/*  70% */ 4075, 4083, 4087, 4088, 4089,
++	/*  68% */ 4055, 4062, 4066, 4068, 4068,
++	/*  66% */ 4036, 4042, 4047, 4048, 4048,
++	/*  64% */ 4017, 4025, 4028, 4029, 4029,
++	/*  62% */ 3999, 4008, 4011, 4012, 4011,
++	/*  60% */ 3984, 3990, 3994, 3995, 3994,
++	/*  58% */ 3969, 3973, 3971, 3973, 3973,
++	/*  56% */ 3954, 3955, 3945, 3946, 3946,
++	/*  54% */ 3937, 3931, 3924, 3923, 3924,
++	/*  52% */ 3920, 3903, 3907, 3907, 3908,
++	/*  50% */ 3900, 3884, 3893, 3894, 3895,
++	/*  48% */ 3879, 3875, 3881, 3882, 3882,
++	/*  46% */ 3865, 3868, 3871, 3870, 3870,
++	/*  44% */ 3857, 3860, 3862, 3860, 3860,
++	/*  42% */ 3850, 3852, 3853, 3851, 3850,
++	/*  40% */ 3844, 3845, 3845, 3842, 3842,
++	/*  38% */ 3840, 3838, 3837, 3834, 3834,
++	/*  36% */ 3835, 3832, 3830, 3827, 3826,
++	/*  34% */ 3831, 3827, 3824, 3820, 3819,
++	/*  32% */ 3827, 3822, 3819, 3815, 3812,
++	/*  30% */ 3823, 3819, 3815, 3809, 3806,
++	/*  28% */ 3820, 3815, 3810, 3803, 3799,
++	/*  26% */ 3817, 3811, 3806, 3797, 3792,
++	/*  24% */ 3811, 3805, 3799, 3790, 3784,
++	/*  22% */ 3804, 3797, 3790, 3780, 3773,
++	/*  20% */ 3795, 3787, 3780, 3769, 3761,
++	/*  18% */ 3783, 3775, 3768, 3758, 3750,
++	/*  16% */ 3769, 3761, 3755, 3745, 3737,
++	/*  14% */ 3753, 3744, 3738, 3729, 3720,
++	/*  12% */ 3735, 3728, 3722, 3714, 3706,
++	/*  10% */ 3722, 3715, 3710, 3705, 3698,
++	/*   9% */ 3719, 3712, 3708, 3701, 3695,
++	/*   8% */ 3715, 3709, 3705, 3699, 3693,
++	/*   7% */ 3712, 3707, 3703, 3697, 3691,
++	/*   6% */ 3709, 3703, 3699, 3692, 3685,
++	/*   5% */ 3701, 3686, 3678, 3668, 3658,
++	/*   4% */ 3670, 3642, 3635, 3624, 3614,
++	/*   3% */ 3618, 3584, 3577, 3566, 3556,
++	/*   2% */ 3548, 3502, 3497, 3487, 3476,
++	/*   1% */ 3429, 3363, 3371, 3363, 3352,
++	/*   0% */ 3000, 3000, 3000, 3000, 3000,
++};
++
++static const u16 atl5020_ocv_mv_legacy[ATL5020_SOC_ROWS * ATL5020_TEMP_COLS] = {
 +	/* 100% */ 4415, 4427, 4434, 4437, 4438,
 +	/*  98% */ 4392, 4403, 4410, 4409, 4409,
 +	/*  96% */ 4369, 4379, 4387, 4387, 4386,
@@ -137,6 +204,10 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +};
 +
 +static const u16 atl5020_rint_mohm[ATL5020_TEMP_COLS] = {
++	123, 118, 114, 111, 110,
++};
++
++static const u16 atl5020_rint_mohm_legacy[ATL5020_TEMP_COLS] = {
 +	127, 121, 117, 114, 114,
 +};
 +
@@ -150,15 +221,16 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +	return y0 + (s32)((num - den / 2) / den);
 +}
 +
-+static int atl5020_ocv_to_soc(u32 ocv_mv, int temp_dc)
++static int atl5020_ocv_to_soc(u32 ocv_mv, int temp_dc, bool joyeuse)
 +{
++	const u16 *ocv = joyeuse ? atl5020_ocv_mv : atl5020_ocv_mv_legacy;
 +	int t_lo_idx, t_hi_idx, t_lo, t_hi;
 +	s32 soc_at_col[2];
 +	s32 soc_pcq;
 +	int c;
 +
-+	if (ocv_mv > 4438)
-+		ocv_mv = 4438;
++	if (ocv_mv > (joyeuse ? 4439 : 4438))
++		ocv_mv = joyeuse ? 4439 : 4438;
 +	if (ocv_mv < 3000)
 +		ocv_mv = 3000;
 +	if (temp_dc < atl5020_temp_dc[0])
@@ -181,12 +253,12 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +		s32 soc_hi_cq, soc_lo_cq;
 +
 +		if ((s32)ocv_mv >=
-+		    (s32)atl5020_ocv_mv[0 * ATL5020_TEMP_COLS + col]) {
++		    (s32)ocv[0 * ATL5020_TEMP_COLS + col]) {
 +			soc_at_col[c] = 10000;
 +			continue;
 +		}
 +		if ((s32)ocv_mv <=
-+		    (s32)atl5020_ocv_mv[(ATL5020_SOC_ROWS - 1) *
++		    (s32)ocv[(ATL5020_SOC_ROWS - 1) *
 +					ATL5020_TEMP_COLS + col]) {
 +			soc_at_col[c] = 0;
 +			continue;
@@ -194,8 +266,8 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +
 +		soc_at_col[c] = 0;
 +		for (r = 0; r < ATL5020_SOC_ROWS - 1; r++) {
-+			v_hi = atl5020_ocv_mv[r * ATL5020_TEMP_COLS + col];
-+			v_lo = atl5020_ocv_mv[(r + 1) * ATL5020_TEMP_COLS + col];
++			v_hi = ocv[r * ATL5020_TEMP_COLS + col];
++			v_lo = ocv[(r + 1) * ATL5020_TEMP_COLS + col];
 +
 +			if (v_lo > v_hi) {
 +				s32 tmp = v_lo; v_lo = v_hi; v_hi = tmp;
@@ -228,8 +300,10 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +	return (int)((soc_pcq + 50) / 100);
 +}
 +
-+static u32 compute_live_ocv(u32 v_now_uv, s32 i_ua_qg_raw, int temp_dc)
++static u32 compute_live_ocv(u32 v_now_uv, s32 i_ua_qg_raw, int temp_dc,
++			    bool joyeuse)
 +{
++	const u16 *rint = joyeuse ? atl5020_rint_mohm : atl5020_rint_mohm_legacy;
 +	int t_lo_idx, t_hi_idx, t_lo, t_hi;
 +	s32 r_lo, r_hi, r_mohm;
 +	s64 drop_uv, ocv_uv;
@@ -247,8 +321,8 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +	t_lo = atl5020_temp_dc[t_lo_idx];
 +	t_hi = atl5020_temp_dc[t_hi_idx];
 +
-+	r_lo = (s32)atl5020_rint_mohm[t_lo_idx];
-+	r_hi = (s32)atl5020_rint_mohm[t_hi_idx];
++	r_lo = (s32)rint[t_lo_idx];
++	r_hi = (s32)rint[t_hi_idx];
 +	r_mohm = (t_hi == t_lo) ? r_lo
 +				: lerp_s32(temp_dc, t_lo, t_hi, r_lo, r_hi);
 +
@@ -258,8 +332,8 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +
 +	if (ocv_uv < 3000000)
 +		ocv_uv = 3000000;
-+	if (ocv_uv > 4438000)
-+		ocv_uv = 4438000;
++	if (ocv_uv > (joyeuse ? 4439000 : 4438000))
++		ocv_uv = joyeuse ? 4439000 : 4438000;
 +	return (u32)((ocv_uv + 500) / 1000);
 +}
 +
@@ -267,21 +341,32 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +	struct device *dev;
 +	struct regmap *regmap;
 +	unsigned int base;
++	u32 current_lsb_na;
++	bool joyeuse;
 +
 +	struct iio_channel *batt_therm_chan;
 +
 +	struct nvmem_device *sdam;
 +
 +	struct power_supply *batt_psy;
++	struct power_supply_desc psy_desc;
 +	struct power_supply_battery_info *batt_info;
 +
 +	struct delayed_work refresh_work;
 +	struct notifier_block nb;
 +
-+	int smoothed_soc;
++	struct mutex soc_lock;
++	int soc_centi;
 +	int reported_soc;
++	int saved_soc;
++	s64 charge_remainder_ua_s;
++	int eta_current_ua;
++	int smoothed_soc;
 +	unsigned long last_step_jiffies;
 +	bool was_plugged;
++	u64 last_sample_s;
++	u64 rest_start_s;
++	u64 last_ocv_correction_s;
 +};
 +
 +static bool qcom_qg_is_cable_plugged(struct qcom_qg_chip *chip)
@@ -307,7 +392,7 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +	}
 +
 +	temp = (s16)(readval[1] << 8 | readval[0]);
-+	*val = div_s64((s64)temp * 152588, 1000);
++	*val = div_s64((s64)temp * chip->current_lsb_na, 1000);
 +
 +	return 0;
 +}
@@ -329,7 +414,7 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +	return 0;
 +}
 +
-+static int qcom_qg_get_capacity(struct qcom_qg_chip *chip, int *val)
++static int qcom_qg_get_capacity_legacy(struct qcom_qg_chip *chip, int *val)
 +{
 +	int ret, v_now, i_now, t_dc = 250;
 +	u32 ocv_mv;
@@ -351,8 +436,8 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +			t_dc = temp_raw / 100; /* millidegC to deci-degC */
 +	}
 +
-+	ocv_mv = compute_live_ocv((u32)v_now, i_now, t_dc);
-+	raw_cap = atl5020_ocv_to_soc(ocv_mv, t_dc);
++	ocv_mv = compute_live_ocv((u32)v_now, i_now, t_dc, false);
++	raw_cap = atl5020_ocv_to_soc(ocv_mv, t_dc, false);
 +	raw_cap = clamp(raw_cap, 0, 100);
 +
 +	is_plugged = qcom_qg_is_cable_plugged(chip);
@@ -407,7 +492,125 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +	return 0;
 +}
 +
++static int qcom_qg_update_soc(struct qcom_qg_chip *chip)
++{
++	int ret, v_now, i_now, t_dc = 250, ocv_soc, next_soc;
++	u64 now = ktime_get_boottime_seconds(), elapsed;
++	u8 stored_soc;
++	bool plugged;
++
++	ret = qcom_qg_get_voltage(chip, QG_S2_NORMAL_AVG_V_DATA0_REG, &v_now);
++	if (ret)
++		return ret;
++	ret = qcom_qg_get_current(chip, QG_S2_NORMAL_AVG_I_DATA0_REG, &i_now);
++	if (ret)
++		return ret;
++	if (chip->batt_therm_chan) {
++		int temp_raw;
++
++		if (!iio_read_channel_processed(chip->batt_therm_chan, &temp_raw))
++			t_dc = temp_raw / 100;
++	}
++	ocv_soc = atl5020_ocv_to_soc(compute_live_ocv(v_now, i_now, t_dc,
++						 chip->joyeuse), t_dc, chip->joyeuse);
++	plugged = qcom_qg_is_cable_plugged(chip);
++
++	mutex_lock(&chip->soc_lock);
++	if (chip->soc_centi < 0) {
++		chip->soc_centi = ocv_soc * 100;
++		chip->eta_current_ua = i_now;
++		if (!nvmem_device_read(chip->sdam, QG_SDAM_SOC_OFFSET,
++					1, &stored_soc) && stored_soc <= 100 &&
++		    abs((int)stored_soc - ocv_soc) <= 15)
++			chip->soc_centi = stored_soc * 100;
++		chip->saved_soc = -1;
++	} else if (chip->last_sample_s && now > chip->last_sample_s) {
++		/* Limit integration after suspend; one ADC sample cannot describe sleep. */
++		elapsed = min_t(u64, now - chip->last_sample_s, 30);
++		s64 delta;
++
++		if ((i_now < 0) != (chip->eta_current_ua < 0))
++			chip->eta_current_ua = i_now;
++		else
++			chip->eta_current_ua += div_s64((s64)(i_now -
++						 chip->eta_current_ua) * elapsed, 60);
++		chip->charge_remainder_ua_s += (s64)i_now * elapsed;
++		delta = div_s64(chip->charge_remainder_ua_s, QG_CENTIPCT_UAS);
++		chip->charge_remainder_ua_s -= delta * QG_CENTIPCT_UAS;
++		chip->soc_centi -= delta;
++		chip->soc_centi = clamp(chip->soc_centi, 0, 10000);
++	}
++	chip->last_sample_s = now;
++
++	if (abs(i_now) < QG_REST_CURRENT_UA) {
++		if (!chip->rest_start_s)
++			chip->rest_start_s = now;
++		if (now - chip->rest_start_s >= QG_REST_TIME_S &&
++		    now - chip->last_ocv_correction_s >= QG_REST_TIME_S &&
++		    abs(ocv_soc * 100 - chip->soc_centi) >= 300) {
++			chip->soc_centi += ocv_soc * 100 > chip->soc_centi ? 100 : -100;
++			chip->last_ocv_correction_s = now;
++		}
++	} else {
++		chip->rest_start_s = 0;
++	}
++
++	/* Hold 99% until charging has tapered at the top of the cell. */
++	if (plugged && i_now < 0 && chip->soc_centi >= 9900)
++		chip->soc_centi = 9900;
++	if (plugged && v_now >= 4430000 && abs(i_now) < QG_REST_CURRENT_UA &&
++	    chip->rest_start_s && now - chip->rest_start_s >= QG_REST_TIME_S)
++		chip->soc_centi = 10000;
++	next_soc = DIV_ROUND_CLOSEST(chip->soc_centi, 100);
++	if (!plugged && next_soc > chip->reported_soc && chip->reported_soc >= 0)
++		next_soc = chip->reported_soc;
++	chip->reported_soc = next_soc;
++	if (chip->saved_soc != next_soc) {
++		stored_soc = next_soc;
++		if (!nvmem_device_write(chip->sdam, QG_SDAM_SOC_OFFSET,
++					 1, &stored_soc))
++			chip->saved_soc = next_soc;
++	}
++	mutex_unlock(&chip->soc_lock);
++	return 0;
++}
++
++static int qcom_qg_get_capacity(struct qcom_qg_chip *chip, int *val)
++{
++	int ret = 0;
++
++	if (!chip->joyeuse)
++		return qcom_qg_get_capacity_legacy(chip, val);
++	if (READ_ONCE(chip->reported_soc) < 0)
++		ret = qcom_qg_update_soc(chip);
++	if (!ret)
++		*val = READ_ONCE(chip->reported_soc);
++	return ret;
++}
++
 +static enum power_supply_property qcom_qg_props[] = {
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_SCOPE,
++	POWER_SUPPLY_PROP_TECHNOLOGY,
++	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
++	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
++	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_AVG,
++	POWER_SUPPLY_PROP_VOLTAGE_OCV,
++	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_CURRENT_AVG,
++	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
++	POWER_SUPPLY_PROP_CHARGE_FULL,
++	POWER_SUPPLY_PROP_CHARGE_NOW,
++	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
++	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
++	POWER_SUPPLY_PROP_TEMP,
++	POWER_SUPPLY_PROP_MODEL_NAME,
++	POWER_SUPPLY_PROP_MANUFACTURER,
++};
++
++static enum power_supply_property qcom_qg_legacy_props[] = {
 +	POWER_SUPPLY_PROP_STATUS,
 +	POWER_SUPPLY_PROP_SCOPE,
 +	POWER_SUPPLY_PROP_TECHNOLOGY,
@@ -486,7 +689,8 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +				if (!iio_read_channel_processed(chip->batt_therm_chan, &tr))
 +					t_dc = tr / 100;
 +			}
-+			val->intval = compute_live_ocv((u32)v_now, i_now, t_dc) * 1000;
++			val->intval = compute_live_ocv((u32)v_now, i_now, t_dc,
++							 chip->joyeuse) * 1000;
 +		}
 +		break;
 +	case POWER_SUPPLY_PROP_CURRENT_NOW:
@@ -495,7 +699,8 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +		if (ret)
 +			return ret;
 +		val->intval = -val->intval;
-+		if (qcom_qg_is_cable_plugged(chip) && val->intval < 0)
++		if (!chip->joyeuse && qcom_qg_is_cable_plugged(chip) &&
++		    val->intval < 0)
 +			val->intval = 0;
 +		break;
 +	case POWER_SUPPLY_PROP_CURRENT_AVG:
@@ -504,24 +709,55 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +		if (ret)
 +			return ret;
 +		val->intval = -val->intval;
-+		if (qcom_qg_is_cable_plugged(chip) && val->intval < 0)
++		if (!chip->joyeuse && qcom_qg_is_cable_plugged(chip) &&
++		    val->intval < 0)
 +			val->intval = 0;
 +		break;
 +	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
 +		val->intval = chip->batt_info->charge_full_design_uah;
 +		break;
 +	case POWER_SUPPLY_PROP_CHARGE_FULL:
-+		ret = nvmem_device_read(chip->sdam,
-+				QG_SDAM_LEARNED_CAPACITY_OFFSET, 2, &val->intval);
-+		if (ret < 0)
-+			val->intval = chip->batt_info->charge_full_design_uah;
-+		else
-+			val->intval *= 1000; /* mAh to uAh */
++		{
++			u16 learned_mah;
++
++			ret = nvmem_device_read(chip->sdam,
++				QG_SDAM_LEARNED_CAPACITY_OFFSET, 2, &learned_mah);
++			if (ret || learned_mah < 3000 || learned_mah > 6000)
++				val->intval = chip->batt_info->charge_full_design_uah;
++			else
++				val->intval = learned_mah * 1000;
++		}
 +		break;
 +	case POWER_SUPPLY_PROP_CAPACITY:
 +		ret = qcom_qg_get_capacity(chip, &val->intval);
 +		if (ret)
 +			return ret;
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_NOW:
++	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
++	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
++		if (!chip->joyeuse)
++			return -EINVAL;
++		ret = qcom_qg_get_capacity(chip, &val->intval);
++		if (ret)
++			return ret;
++		mutex_lock(&chip->soc_lock);
++		if (psp == POWER_SUPPLY_PROP_CHARGE_NOW) {
++			val->intval = div_s64((s64)chip->soc_centi *
++						 QG_CAPACITY_UAH, 10000);
++		} else {
++			int current_ua = chip->eta_current_ua;
++			int centi = chip->soc_centi;
++
++			if (psp == POWER_SUPPLY_PROP_TIME_TO_FULL_AVG) {
++				current_ua = -current_ua;
++				centi = 10000 - centi;
++			}
++			val->intval = current_ua < QG_REST_CURRENT_UA ? 0 :
++				div64_s64((s64)centi * QG_CAPACITY_UAH * 3600,
++						 10000LL * current_ua);
++		}
++		mutex_unlock(&chip->soc_lock);
 +		break;
 +	case POWER_SUPPLY_PROP_TEMP:
 +		ret = iio_read_channel_processed
@@ -549,10 +785,11 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +	struct qcom_qg_chip *chip = container_of(w, struct qcom_qg_chip,
 +						 refresh_work.work);
 +
-+	if (chip->batt_psy)
++	if (!chip->joyeuse || !qcom_qg_update_soc(chip))
 +		power_supply_changed(chip->batt_psy);
 +
-+	schedule_delayed_work(&chip->refresh_work, msecs_to_jiffies(QG_REFRESH_MS));
++	schedule_delayed_work(&chip->refresh_work,
++		msecs_to_jiffies(chip->joyeuse ? QG_REFRESH_MS : 1000));
 +}
 +
 +static int qcom_qg_notifier(struct notifier_block *nb, unsigned long ev, void *v)
@@ -576,6 +813,7 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +{
 +	struct qcom_qg_chip *chip;
 +	struct power_supply_config psy_cfg = {};
++	unsigned int subtype;
 +	int ret;
 +
 +	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
@@ -583,6 +821,7 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +		return -ENOMEM;
 +
 +	chip->dev = &pdev->dev;
++	chip->joyeuse = of_machine_is_compatible("xiaomi,joyeuse");
 +
 +	/* Regmap */
 +	chip->regmap = dev_get_regmap(chip->dev->parent, NULL);
@@ -596,6 +835,25 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +		return dev_err_probe(chip->dev, ret,
 +				     "Couldn't read base address\n");
 +
++	ret = regmap_read(chip->regmap, chip->base + QG_PERPH_SUBTYPE_REG,
++			  &subtype);
++	if (ret)
++		return dev_err_probe(chip->dev, ret,
++				     "Couldn't read QGauge subtype\n");
++	switch (subtype) {
++	case QG_ADC_IBAT_5A:
++		chip->current_lsb_na = 152588;
++		break;
++	case QG_ADC_IBAT_10A:
++		chip->current_lsb_na = 305176;
++		break;
++	default:
++		return dev_err_probe(chip->dev, -ENODEV,
++				     "Unsupported QGauge subtype %#x\n", subtype);
++	}
++	if (!chip->joyeuse)
++		chip->current_lsb_na = 152588;
++
 +	/* ADC for thermal channel */
 +	chip->batt_therm_chan = devm_iio_channel_get(chip->dev, "batt-therm");
 +	if (IS_ERR(chip->batt_therm_chan))
@@ -607,18 +865,28 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +	if (IS_ERR(chip->sdam))
 +		return dev_err_probe(chip->dev, PTR_ERR(chip->sdam),
 +				     "Couldn't get SDAM nvmem device\n");
-+
-+	/* Clear SDAM_VALID so Android/recovery recalculates accurate PON OCV on boot */
-+	{
++	if (!chip->joyeuse) {
 +		u8 zero = 0;
++
 +		nvmem_device_write(chip->sdam, QG_SDAM_VALID_OFFSET, 1, &zero);
 +	}
 +
 +	psy_cfg.drv_data = chip;
++	mutex_init(&chip->soc_lock);
++	chip->soc_centi = -1;
++	chip->reported_soc = -1;
++	chip->smoothed_soc = -1;
++	chip->last_step_jiffies = jiffies;
++	chip->was_plugged = qcom_qg_is_cable_plugged(chip);
++	chip->psy_desc = batt_psy_desc;
++	if (!chip->joyeuse) {
++		chip->psy_desc.properties = qcom_qg_legacy_props;
++		chip->psy_desc.num_properties = ARRAY_SIZE(qcom_qg_legacy_props);
++	}
 +
 +	/* Power supply */
 +	chip->batt_psy =
-+		devm_power_supply_register(chip->dev, &batt_psy_desc, &psy_cfg);
++		devm_power_supply_register(chip->dev, &chip->psy_desc, &psy_cfg);
 +	if (IS_ERR(chip->batt_psy))
 +		return dev_err_probe(chip->dev, PTR_ERR(chip->batt_psy),
 +				     "Failed to register power supply\n");
@@ -631,13 +899,9 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +
 +	platform_set_drvdata(pdev, chip);
 +
-+	chip->smoothed_soc = -1;
-+	chip->reported_soc = -1;
-+	chip->last_step_jiffies = jiffies;
-+	chip->was_plugged = qcom_qg_is_cable_plugged(chip);
-+
 +	INIT_DELAYED_WORK(&chip->refresh_work, qcom_qg_refresh_work);
-+	schedule_delayed_work(&chip->refresh_work, msecs_to_jiffies(QG_REFRESH_MS));
++	schedule_delayed_work(&chip->refresh_work,
++		msecs_to_jiffies(chip->joyeuse ? QG_REFRESH_MS : 1000));
 +
 +	chip->nb.notifier_call = qcom_qg_notifier;
 +	power_supply_reg_notifier(&chip->nb);
@@ -648,20 +912,17 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +static void qcom_qg_shutdown(struct platform_device *pdev)
 +{
 +	struct qcom_qg_chip *chip = platform_get_drvdata(pdev);
-+	u8 zero = 0;
-+	int cap = 0;
++	u8 soc;
 +
-+	if (!chip || !chip->sdam)
++	if (!chip || !chip->sdam || chip->reported_soc < 0)
 +		return;
++	soc = chip->reported_soc;
++	nvmem_device_write(chip->sdam, QG_SDAM_SOC_OFFSET, 1, &soc);
++	if (!chip->joyeuse) {
++		u8 zero = 0;
 +
-+	if (!qcom_qg_get_capacity(chip, &cap)) {
-+		u8 sdam_soc = (u8)clamp(cap, 0, 100);
-+		nvmem_device_write(chip->sdam, QG_SDAM_SOC_OFFSET, 1, &sdam_soc);
++		nvmem_device_write(chip->sdam, QG_SDAM_VALID_OFFSET, 1, &zero);
 +	}
-+
-+	/* Invalidate SDAM_VALID to force Android to recalculate clean PON OCV at boot */
-+	nvmem_device_write(chip->sdam, QG_SDAM_VALID_OFFSET, 1, &zero);
-+	dev_info(chip->dev, "SDAM_VALID invalidated for clean reboot\n");
 +}
 +
 +static void qcom_qg_remove(struct platform_device *pdev)
@@ -694,7 +955,7 @@ the ATL 5020 mAh cell, and register it in Kconfig/Makefile.
 +module_platform_driver(qcom_qg_driver);
 +
 +MODULE_AUTHOR("Danila Tikhonov <danila@jiaxyga.com>");
-+MODULE_DESCRIPTION("Qualcomm PMIC QGauge (QG) driver with ATL 5020 SoC LUT");
++MODULE_DESCRIPTION("Qualcomm PMIC QGauge (QG) driver with J6B NVT charge tracking");
 +MODULE_LICENSE("GPL");
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
