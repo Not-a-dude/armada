@@ -558,6 +558,12 @@
 	status = "okay";
 };
 
+&remoteproc_cdsp {
+	memory-region = <&cdsp_mem>;
+	firmware-name = "qcom/sm7125/miatoll/cdsp.mbn";
+	status = "okay";
+};
+
 &remoteproc_mpss {
 	firmware-name = "qcom/sm7125/miatoll/modem.mbn";
 	status = "okay";

@@ -1346,3 +1346,8 @@ no equivalent submission was found, or a permanent URL to the upstream submissio
   source: armada
   upstream: local
   notes: Adds the PM6150 SMB5 charger node, USB input ADC channels, and a TCPM current-limit bridge. The Xiaomi board DTS configures direct-charge and thermal limits. SMB1396 charge-pump modes are excluded.
+
+- `patches/1325-remoteproc-qcom-add-sc7180-cdsp.patch`
+  source: armada
+  upstream: local
+  notes: Adds the SC7180 CDSP PAS match, remoteproc, GLINK and non-secure FastRPC context banks used by SM7125. The hardware resources and firmware protocol are taken from the matching Atoll downstream description; only mainline drivers are used.
