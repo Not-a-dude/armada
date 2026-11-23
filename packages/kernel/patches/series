@@ -381,5 +381,4 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1321-power-supply-qcom-pm6150-smb5-charger.patch
 1323-power-supply-qcom-smb5-compatibility.patch
 1324-power-supply-port-joyeuse-smb5-and-smb1396.patch
-1325-remoteproc-qcom-add-sc7180-cdsp.patch
 0020-ASoC-qcom-sc7180-allow-codec-dma-dais.patch
