@@ -2217,7 +2217,7 @@ to select the driver and its battery profiles and authenticator.
 +#ifndef __BATTERY_H
 +#define __BATTERY_H
 +
-+#define JOYEUSE_CHARGER_BATT_PSY "joyeuse-battery-charger"
++#define JOYEUSE_CHARGER_BATT_PSY "joyeuse-smb5-batt"
 +
 +struct charger_param {
 +	u32 fcc_step_delay_ms;
