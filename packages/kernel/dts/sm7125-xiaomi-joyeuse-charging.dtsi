@@ -1,0 +1,349 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2020 Xiaomi, Inc.
+ */
+
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+
+/ {
+	joyeuse_battery_auth: battery-auth {
+		compatible = "xiaomi,joyeuse-battery-auth";
+		gpios = <&tlmm 93 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&joyeuse_battery_auth_pins>;
+	};
+
+
+	joyeuse_battery_profiles: qcom,battery-data {
+		qcom,batt-id-range-pct = <15>;
+		#include "sm7125-xiaomi-joyeuse-charging-profiles.dtsi"
+	};
+};
+
+&pm6150_lsid0 {
+	joyeuse_pmic_rev: revid@100 {
+		compatible = "qcom,qpnp-revid";
+		reg = <0x100>;
+	};
+
+	joyeuse_stock_smb5: charger {
+		compatible = "xiaomi,joyeuse-smb5";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		monitored-battery = <&battery>;
+		qcom,pmic-revid = <&joyeuse_pmic_rev>;
+		qcom,battery-data = <&joyeuse_battery_profiles>;
+		qcom,auto-recharge-soc = <99>;
+		qcom,sec-charger-config = <1>;
+		qcom,chg-term-src = <1>;
+		qcom,chg-term-current-ma = <(-200)>;
+		qcom,sw-jeita-enable;
+		qcom,dynamic-fv-enable;
+		qcom,step-charging-enable;
+		qcom,en-qc3-with-cp;
+		qcom,disable-suspend-on-collapse;
+		qcom,charger-temp-max = <800>;
+		qcom,smb-temp-max = <800>;
+		qcom,fcc-step-delay-ms = <100>;
+		qcom,fcc-step-size-ua = <100000>;
+		qcom,smb-internal-pull-kohm = <0>;
+
+		io-channels = <&pm6150_adc ADC5_USB_IN_V_16>,
+			      <&pm6150_adc ADC5_USB_IN_I>,
+			      <&pm6150_adc ADC5_CHG_TEMP>,
+			      <&pm6150_adc ADC5_DIE_TEMP>,
+			      <&pm6150_adc ADC5_AMUX_THM3_100K_PU>,
+			      <&pm6150_adc ADC5_VPH_PWR>;
+		io-channel-names = "usb_in_voltage", "usb_in_current",
+				   "chg_temp", "die_temp", "conn_temp",
+				   "vph_voltage";
+
+		qcom,fcc-max-ua = <5900000>;
+		qcom,fv-max-uv = <4480000>;
+		qcom,thermal-mitigation = <3500000 3400000 3300000 3200000 3100000 3000000 2900000
+		                           2800000 2600000 2400000 2200000 2000000 1800000 1500000
+		                           1000000 500000>;
+		qcom,thermal-mitigation-icl
+		                        = <2800000 2700000 2600000 2400000 2200000 2100000 2000000
+		                           2000000 2000000 1900000 1800000 1600000 1500000 1300000
+		                           800000 750000>;
+		qcom,thermal-mitigation-dcp
+		                        = <1800000 1800000 1800000 1800000 1800000 1800000 1800000
+		                           1800000 1800000 1700000 1600000 1400000 1200000 1100000
+		                           1100000 1000000>;
+		qcom,thermal-mitigation-qc2
+		                        = <1500000 1500000 1500000 1500000 1450000 1400000 1350000
+		                           1300000 1150000 1100000 1000000 900000 850000 750000
+		                           650000 500000>;
+		qcom,thermal-fcc-qc3-normal
+		                        = <3500000 3400000 3300000 3200000 3100000 3000000 2900000
+		                           2800000 2700000 2600000 2400000 2200000 2000000 2000000
+		                           750000 700000>;
+		qcom,thermal-fcc-qc3-cp
+		                        = <3500000 3500000 3500000 3500000 3400000 3300000 3200000
+		                           3100000 3000000 2800000 2600000 2400000 2200000 2000000
+		                           1000000 700000>;
+		qcom,thermal-fcc-qc3-classb-cp
+		                        = <6000000 5500000 4900000 4600000 4500000 4400000 4200000
+		                           3800000 3800000 3600000 3400000 3200000 3000000 2200000
+		                           800000 700000>;
+		qcom,thermal-fcc-qc3p5-cp
+		                        = <4500000 4500000 4500000 4500000 4500000 4400000 4200000
+		                           3800000 3800000 3600000 3400000 3200000 3000000 2200000
+		                           800000 700000>;
+		qcom,thermal-mitigation-pd-base
+		                        = <2800000 2700000 2600000 2400000 2200000 2100000 2000000
+		                           2000000 2000000 1900000 1800000 1600000 1500000 1300000
+		                           800000 750000>;
+		qcom,thermal-fcc-pps-cp
+		                        = <6000000 5500000 4900000 4600000 4500000 4400000 4200000
+		                           3800000 3800000 3600000 3400000 3200000 3000000 2200000
+		                           800000 700000>;
+		mi,six-pin-step-chg-params = <4240000  5900000
+		                              4440000  4800000
+		                              4480000  3800000>;
+		mi,six-pin-step-chg;
+		mi,support-ffc;
+		qcom,temp-27W-enable;
+
+		qcom,chgr@1000 {
+			reg = <0x1000 0x100>;
+			interrupts =
+				<0x0 0x10 0x0 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x10 0x1 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x10 0x2 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x10 0x3 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x10 0x4 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x10 0x5 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x10 0x6 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x10 0x7 IRQ_TYPE_EDGE_RISING>;
+
+			interrupt-names = "chgr-error",
+					  "chg-state-change",
+					  "step-chg-state-change",
+					  "step-chg-soc-update-fail",
+					  "step-chg-soc-update-req",
+					  "fg-fvcal-qualified",
+					  "vph-alarm",
+					  "vph-drop-prechg";
+		};
+
+		qcom,dcdc@1100 {
+			reg = <0x1100 0x100>;
+			interrupts =
+				<0x0 0x11 0x0 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x11 0x1 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x11 0x2 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x11 0x3 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x11 0x4 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x11 0x5 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x11 0x6 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x11 0x7 IRQ_TYPE_EDGE_BOTH>;
+
+			interrupt-names = "otg-fail",
+					  "otg-oc-disable-sw",
+					  "otg-oc-hiccup",
+					  "bsm-active",
+					  "high-duty-cycle",
+					  "input-current-limiting",
+					  "concurrent-mode-disable",
+					  "switcher-power-ok";
+		};
+
+		qcom,batif@1200 {
+			reg = <0x1200 0x100>;
+			interrupts =
+				<0x0 0x12 0x0 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x12 0x2 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x12 0x3 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x12 0x4 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x12 0x5 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x12 0x6 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x12 0x7 IRQ_TYPE_EDGE_BOTH>;
+
+			interrupt-names = "bat-temp",
+					  "bat-ov",
+					  "bat-low",
+					  "bat-therm-or-id-missing",
+					  "bat-terminal-missing",
+					  "buck-oc",
+					  "vph-ov";
+		};
+
+		qcom,usb@1300 {
+			reg = <0x1300 0x100>;
+			interrupts =
+				<0x0 0x13 0x0 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x13 0x1 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x13 0x2 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x13 0x3 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x13 0x4 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x13 0x5 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x13 0x6 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x13 0x7 IRQ_TYPE_EDGE_RISING>;
+
+			interrupt-names = "usbin-collapse",
+					  "usbin-vashdn",
+					  "usbin-uv",
+					  "usbin-ov",
+					  "usbin-plugin",
+					  "usbin-revi-change",
+					  "usbin-src-change",
+					  "usbin-icl-change";
+		};
+
+		qcom,dc@1400 {
+			reg = <0x1400 0x100>;
+			interrupts =
+				<0x0 0x14 0x1 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x14 0x2 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x14 0x3 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x14 0x4 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x14 0x5 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x14 0x6 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x14 0x7 IRQ_TYPE_EDGE_RISING>;
+
+			interrupt-names = "dcin-vashdn",
+					  "dcin-uv",
+					  "dcin-ov",
+					  "dcin-plugin",
+					  "dcin-revi",
+					  "dcin-pon",
+					  "dcin-en";
+		};
+
+		qcom,misc@1600 {
+			reg = <0x1600 0x100>;
+			interrupts =
+				<0x0 0x16 0x0 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x16 0x1 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x16 0x2 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x16 0x3 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x16 0x4 IRQ_TYPE_EDGE_BOTH>,
+				<0x0 0x16 0x5 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x16 0x6 IRQ_TYPE_EDGE_RISING>,
+				<0x0 0x16 0x7 IRQ_TYPE_EDGE_RISING>;
+
+			interrupt-names = "wdog-snarl",
+					  "wdog-bark",
+					  "aicl-fail",
+					  "aicl-done",
+					  "smb-en",
+					  "imp-trigger",
+					  "temp-change",
+					  "temp-change-smb";
+		};
+
+		qcom,sdam@b100 {
+			reg = <0xb100 0x100>;
+			interrupts =
+				<0x0 0xb1 0x1 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "sdam-sts";
+		};
+
+	};
+};
+
+&pm6150_charger {
+	status = "disabled";
+};
+
+&pm6150_qgauge {
+	qcom,battery-data = <&joyeuse_battery_profiles>;
+	xiaomi,battery-auth = <&joyeuse_battery_auth>;
+};
+
+&pm6150_typec {
+	qcom,charger = <&joyeuse_stock_smb5>;
+	xiaomi,stock-charger;
+
+	connector {
+		sink-pdos = <PDO_FIXED(5000, 3000, PDO_FIXED_DUAL_ROLE |
+				PDO_FIXED_USB_COMM | PDO_FIXED_DATA_SWAP)
+			     PDO_FIXED(9000, 3000, 0)>;
+	};
+};
+
+&pm6150_gpios {
+	joyeuse_smb_stat: smb-stat-state {
+		pins = "gpio3";
+		function = "normal";
+		input-enable;
+		bias-pull-up;
+		qcom,pull-up-strength = <PMIC_GPIO_PULL_UP_30>;
+		power-source = <0>;
+	};
+};
+
+&pm6150_adc {
+	channel@83 {
+		reg = <ADC5_VPH_PWR>;
+	};
+
+	channel@9 {
+		reg = <ADC5_CHG_TEMP>;
+	};
+
+	channel@e {
+		reg = <ADC5_AMUX_THM2>;
+	};
+
+	channel@4f {
+		reg = <ADC5_AMUX_THM3_100K_PU>;
+		qcom,ratiometric;
+	};
+};
+
+&i2c9 {
+	pmic@34 {
+		compatible = "xiaomi,joyeuse-smb1396-pmic";
+		reg = <0x34>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		interrupt-controller;
+		#interrupt-cells = <3>;
+		qcom,periph-map = <0x6 0x26 0x27>;
+		interrupts-extended = <&spmi_bus 0 0xc2 0 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&joyeuse_smb_stat>;
+
+		smb1396_revid: revid@100 {
+			compatible = "qcom,qpnp-revid";
+			reg = <0x100>;
+		};
+
+		smb1396_div2_cp_master: qcom,div2_cp {
+			compatible = "qcom,smb1396-div2-cp-master";
+			qcom,pmic-revid = <&smb1396_revid>;
+			io-channels = <&pm6150_adc ADC5_AMUX_THM2>;
+			io-channel-names = "die_temp";
+			interrupts = <0x26 0x1 IRQ_TYPE_EDGE_RISING>,
+				     <0x26 0x3 IRQ_TYPE_EDGE_RISING>,
+				     <0x26 0x5 IRQ_TYPE_EDGE_RISING>,
+				     <0x26 0x7 IRQ_TYPE_EDGE_RISING>,
+				     <0x27 0x5 IRQ_TYPE_EDGE_RISING>,
+				     <0x27 0x6 IRQ_TYPE_EDGE_RISING>,
+				     <0x27 0x7 IRQ_TYPE_EDGE_RISING>;
+			interrupt-names = "temp-shdwn",
+					  "div2-irev",
+					  "usbin-uv",
+					  "usbin-ov",
+					  "div2-ilim",
+					  "div2-win-uv",
+					  "div2-win-ov";
+			qcom,max-cutoff-soc = <90>;
+			mi,six-pin-batt;
+			mi,qc3p5-ffc-batt;
+		};
+	};
+};
+
+&tlmm {
+	joyeuse_battery_auth_pins: battery-auth-state {
+		pins = "gpio93";
+		function = "gpio";
+		bias-disable;
+	};
+};

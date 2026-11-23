@@ -1,0 +1,516 @@
+Subject: [PATCH] power: supply: port Joyeuse PM6150 charging policy
+
+Apply Joyeuse current arbitration, battery temperature and voltage limits,
+and diagnostic votes without changing other devices.
+
+--- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec.c
++++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec.c
+@@ -29,14 +29,39 @@
+ 	return 0;
+ }
+ 
++static int qcom_pmic_typec_get_current_limit(struct tcpc_dev *tcpc)
++{
++	struct pmic_typec *tcpm = tcpc_to_tcpm(tcpc);
++	union power_supply_propval val;
++
++	if (tcpm->charger &&
++	    !power_supply_get_property(tcpm->charger,
++				       POWER_SUPPLY_PROP_USB_TYPE, &val) &&
++	    (val.intval == POWER_SUPPLY_USB_TYPE_CDP ||
++	     val.intval == POWER_SUPPLY_USB_TYPE_DCP))
++		return 1500;
++
++	return 500;
++}
++
+ static int qcom_pmic_typec_set_current_limit(struct tcpc_dev *tcpc,
+ 					     u32 max_ma, u32 mv)
+ {
+ 	struct pmic_typec *tcpm = tcpc_to_tcpm(tcpc);
+ 	union power_supply_propval val = { .intval = max_ma * 1000 };
++	int rc;
+ 
+ 	if (!tcpm->charger)
+ 		return 0;
++	if (of_machine_is_compatible("xiaomi,joyeuse")) {
++		val.intval = mv * 1000;
++		rc = power_supply_set_property(tcpm->charger,
++					       POWER_SUPPLY_PROP_VOLTAGE_MAX,
++					       &val);
++		if (rc)
++			return rc;
++		val.intval = max_ma * 1000;
++	}
+ 
+ 	return power_supply_set_property(tcpm->charger,
+ 					 POWER_SUPPLY_PROP_CURRENT_MAX, &val);
+@@ -72,6 +97,9 @@
+ 		tcpm->charger = NULL;
+ 	}
+ 	tcpm->tcpc.set_current_limit = qcom_pmic_typec_set_current_limit;
++	if (of_machine_is_compatible("xiaomi,joyeuse"))
++		tcpm->tcpc.get_current_limit =
++			qcom_pmic_typec_get_current_limit;
+ 
+ 	regmap = dev_get_regmap(dev->parent, NULL);
+ 	if (!regmap) {
+--- a/drivers/power/supply/qcom_pm8150b_charger.c
++++ b/drivers/power/supply/qcom_pm8150b_charger.c
+@@ -16,12 +16,14 @@
+ #include <linux/kernel.h>
+ #include <linux/minmax.h>
+ #include <linux/module.h>
++#include <linux/debugfs.h>
+ #include <linux/mutex.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_wakeirq.h>
+ #include <linux/of.h>
+ #include <linux/power_supply.h>
+ #include <linux/regmap.h>
++#include <linux/seq_file.h>
+ #include <linux/types.h>
+ #include <linux/workqueue.h>
+ 
+@@ -316,8 +318,21 @@
+ 	int thermal_levels;
+ 	int thermal_level;
+ 	bool pm6150;
++	bool joyeuse;
++	u32 typec_icl_ua;
++	u32 apsd_icl_ua;
++	u32 thermal_vote_icl_ua;
++	u32 contract_voltage_uv;
++	u32 effective_icl_ua;
++	u32 jeita_fcc_ua;
++	u32 jeita_fv_uv;
++	u32 step_fcc_ua;
++	int battery_temp_decic;
++	int battery_voltage_uv;
++	bool jeita_suspend;
+ 
+ 	struct delayed_work status_change_work;
++	struct delayed_work battery_policy_work;
+ 	int cable_irq;
+ 	bool wakeup_enabled;
+ 
+@@ -325,8 +340,55 @@
+ 	struct iio_channel *usb_in_v_chan;
+ 
+ 	struct power_supply *chg_psy;
++	struct dentry *debug_root;
+ };
+ 
++static int smb5_votes_show(struct seq_file *s, void *unused)
++{
++	struct smb5_chip *chip = s->private;
++	unsigned int icl_cfg, icl_status, aicl_status, load_cfg;
++	int rc;
++
++	mutex_lock(&chip->lock);
++	seq_printf(s, "typec_ua=%u apsd_ua=%u thermal_ua=%u board_ua=%u\n",
++		   chip->typec_icl_ua, chip->apsd_icl_ua,
++		   chip->thermal_vote_icl_ua, chip->usb_icl_max_ua);
++	seq_printf(s, "contract_uv=%u effective_ua=%u thermal_level=%d\n",
++		   chip->contract_voltage_uv, chip->effective_icl_ua,
++		   chip->thermal_level);
++	seq_printf(s, "battery_temp_decic=%d battery_uv=%d jeita_fcc_ua=%u jeita_fv_uv=%u step_fcc_ua=%u jeita_suspend=%u\n",
++		   chip->battery_temp_decic, chip->battery_voltage_uv,
++		   chip->jeita_fcc_ua, chip->jeita_fv_uv,
++		   chip->step_fcc_ua, chip->jeita_suspend);
++	rc = regmap_read(chip->regmap, chip->base + USBIN_CURRENT_LIMIT_CFG,
++			 &icl_cfg);
++	if (!rc)
++		seq_printf(s, "usb_icl_cfg_ua=%u\n",
++			   icl_cfg * CURRENT_SCALE_FACTOR);
++	rc = regmap_read(chip->regmap, chip->base + ICL_STATUS, &icl_status);
++	if (!rc)
++		seq_printf(s, "icl_status_ua=%u\n",
++			   icl_status * CURRENT_SCALE_FACTOR);
++	rc = regmap_read(chip->regmap, chip->base + AICL_STATUS,
++			 &aicl_status);
++	if (!rc)
++		seq_printf(s, "aicl_status_ua=%u\n",
++			   aicl_status * CURRENT_SCALE_FACTOR);
++	rc = regmap_read(chip->regmap, chip->base + USBIN_LOAD_CFG, &load_cfg);
++	if (!rc)
++		seq_printf(s, "icl_override_after_apsd=%u\n",
++			   !!(load_cfg & ICL_OVERRIDE_AFTER_APSD_BIT));
++	mutex_unlock(&chip->lock);
++
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(smb5_votes);
++
++static void smb5_remove_debugfs(void *data)
++{
++	debugfs_remove_recursive(data);
++}
++
+ static enum power_supply_property smb5_properties[] = {
+ 	POWER_SUPPLY_PROP_MANUFACTURER,
+ 	POWER_SUPPLY_PROP_MODEL_NAME,
+@@ -399,7 +461,8 @@
+ 	} else if (stat & OCP_CHARGER_BIT){
+ 		*val = POWER_SUPPLY_USB_TYPE_DCP;
+ 	} else if (stat & FLOAT_CHARGER_BIT){
+-		*val = POWER_SUPPLY_USB_TYPE_DCP;
++		*val = chip->joyeuse ? POWER_SUPPLY_USB_TYPE_UNKNOWN :
++			POWER_SUPPLY_USB_TYPE_DCP;
+ 	} else if (stat & QC_2P0_BIT){
+ 		*val = POWER_SUPPLY_USB_TYPE_DCP;
+ 	} else if (stat & QC_3P0_BIT){
+@@ -445,14 +508,17 @@
+ 	case TAPER_CHARGE:
+ 		*val = POWER_SUPPLY_STATUS_CHARGING;
+ 		return rc;
++	case TERMINATE_CHARGE:
++		*val = POWER_SUPPLY_STATUS_FULL;
++		return rc;
++	case INHIBIT_CHARGE:
++		*val = chip->joyeuse ? POWER_SUPPLY_STATUS_NOT_CHARGING :
++			POWER_SUPPLY_STATUS_FULL;
++		return rc;
+ 	case PAUSE_CHARGE:
+ 	case DISABLE_CHARGE:
+ 		*val = POWER_SUPPLY_STATUS_NOT_CHARGING;
+ 		return rc;
+-	case TERMINATE_CHARGE:
+-	case INHIBIT_CHARGE:
+-		*val = POWER_SUPPLY_STATUS_FULL;
+-		return rc;
+ 	default:
+ 		*val = POWER_SUPPLY_STATUS_UNKNOWN;
+ 		return rc;
+@@ -472,6 +538,7 @@
+ static int smb5_set_current_limit(struct smb5_chip *chip, unsigned int val)
+ {
+ 	unsigned char val_raw;
++	int rc;
+ 
+ 	if (val > chip->usb_icl_max_ua)
+ 		val = chip->usb_icl_max_ua;
+@@ -483,8 +550,36 @@
+ 	}
+ 	val_raw = val / CURRENT_SCALE_FACTOR;
+ 
+-	return regmap_write(chip->regmap, chip->base + USBIN_CURRENT_LIMIT_CFG,
+-		val_raw);
++	rc = regmap_write(chip->regmap, chip->base + USBIN_CURRENT_LIMIT_CFG,
++			  val_raw);
++	if (rc || !chip->joyeuse)
++		return rc;
++
++	return regmap_update_bits(chip->regmap, chip->base + USBIN_LOAD_CFG,
++				  ICL_OVERRIDE_AFTER_APSD_BIT,
++				  val > SDP_CURRENT_UA ?
++				  ICL_OVERRIDE_AFTER_APSD_BIT : 0);
++}
++
++static int smb5_apply_icl_votes(struct smb5_chip *chip)
++{
++	u32 source_ua, effective_ua;
++	int rc;
++
++	if (!chip->joyeuse)
++		return smb5_set_current_limit(chip, chip->typec_icl_ua);
++
++	/* BC1.2 and Type-C describe the same source until PD takes over. */
++	if (chip->contract_voltage_uv > 5500000)
++		source_ua = chip->typec_icl_ua;
++	else
++		source_ua = max(chip->typec_icl_ua, chip->apsd_icl_ua);
++	effective_ua = min3(source_ua, chip->thermal_vote_icl_ua,
++			    chip->usb_icl_max_ua);
++	rc = smb5_set_current_limit(chip, effective_ua);
++	if (!rc)
++		chip->effective_icl_ua = effective_ua;
++	return rc;
+ }
+ 
+ static int smb5_set_fast_charge_current(struct smb5_chip *chip, u32 val)
+@@ -531,18 +626,99 @@
+ 		fcc = chip->thermal_fcc_ua[level - 1];
+ 		icl = chip->thermal_icl_ua[level - 1];
+ 	}
++	if (chip->joyeuse) {
++		fcc = min3(fcc, chip->jeita_fcc_ua, chip->step_fcc_ua);
++		icl = min(icl, chip->usb_icl_max_ua);
++	}
+ 
+ 	rc = smb5_set_fast_charge_current(chip, fcc);
+ 	if (rc)
+ 		return rc;
++	if (chip->joyeuse) {
++		rc = smb5_set_float_voltage(chip, chip->jeita_fv_uv);
++		if (rc)
++			return rc;
++		rc = regmap_update_bits(chip->regmap,
++				chip->base + CHARGING_ENABLE_CMD,
++				CHARGING_ENABLE_CMD_BIT,
++				chip->jeita_suspend ? 0 : CHARGING_ENABLE_CMD_BIT);
++		if (rc)
++			return rc;
++	}
+ 
+-	return smb5_set_current_limit(chip, icl);
++	if (!chip->joyeuse)
++		return smb5_set_current_limit(chip, icl);
++	chip->thermal_vote_icl_ua = icl;
++	return smb5_apply_icl_votes(chip);
++}
++
++static void smb5_update_joyeuse_battery_limits(struct smb5_chip *chip)
++{
++	struct power_supply *battery;
++	union power_supply_propval temp, voltage;
++	u32 fcc, fv, step_fcc;
++	bool suspend;
++
++	if (!chip->joyeuse)
++		return;
++
++	battery = power_supply_get_by_name("qcom_qg");
++	if (!battery)
++		return;
++	if (power_supply_get_property(battery, POWER_SUPPLY_PROP_TEMP, &temp) ||
++	    power_supply_get_property(battery, POWER_SUPPLY_PROP_VOLTAGE_NOW,
++				      &voltage)) {
++		power_supply_put(battery);
++		return;
++	}
++	power_supply_put(battery);
++
++	/* Conservative intersection of the stock 5020 mAh battery profiles. */
++	suspend = temp.intval < 0 || temp.intval > 580;
++	if (temp.intval <= 50)
++		fcc = 900000;
++	else if (temp.intval <= 100)
++		fcc = 2300000;
++	else if (temp.intval <= 150)
++		fcc = 3300000;
++	else if (temp.intval <= 450)
++		fcc = chip->fcc_max_ua;
++	else
++		fcc = 2300000;
++	fv = temp.intval > 450 ? 4100000 : 4450000;
++	step_fcc = voltage.intval > 4450000 ? 3000000 :
++		   voltage.intval > 4250000 ? 3300000 : chip->fcc_max_ua;
++
++	mutex_lock(&chip->lock);
++	chip->battery_temp_decic = temp.intval;
++	chip->battery_voltage_uv = voltage.intval;
++	chip->jeita_fcc_ua = fcc;
++	chip->jeita_fv_uv = min(fv, chip->float_voltage_uv);
++	chip->step_fcc_ua = step_fcc;
++	chip->jeita_suspend = suspend;
++	smb5_apply_thermal_limit(chip);
++	mutex_unlock(&chip->lock);
++}
++
++static void smb5_battery_policy_work(struct work_struct *work)
++{
++	struct smb5_chip *chip = container_of(work, struct smb5_chip,
++						battery_policy_work.work);
++	int online;
++
++	if (smb5_get_prop_usb_online(chip, &online) || !online)
++		return;
++
++	smb5_update_joyeuse_battery_limits(chip);
++	schedule_delayed_work(&chip->battery_policy_work,
++			      msecs_to_jiffies(10000));
+ }
+ 
+ static void smb5_status_change_work(struct work_struct *work)
+ {
+ 	unsigned int charger_type, current_ua;
+ 	int usb_online = 0;
++	int voltage_uv;
+ 	int count, rc;
+ 	struct smb5_chip *chip;
+ 
+@@ -586,13 +762,23 @@
+ 		current_ua = SDP_CURRENT_UA;
+ 		break;
+ 	}
++	if (chip->joyeuse && charger_type != POWER_SUPPLY_USB_TYPE_SDP &&
++	    (iio_read_channel_processed(chip->usb_in_v_chan, &voltage_uv) ||
++	     voltage_uv < 5500000))
++		current_ua = min(current_ua, 1500000U);
+ 
+ 	mutex_lock(&chip->lock);
+-	if (chip->thermal_level)
+-		current_ua = min_t(unsigned int, current_ua,
+-				   chip->thermal_icl_ua[chip->thermal_level - 1]);
+-	smb5_set_current_limit(chip, current_ua);
++	if (chip->joyeuse) {
++		chip->apsd_icl_ua = current_ua;
++		smb5_apply_icl_votes(chip);
++	} else {
++		if (chip->thermal_level)
++			current_ua = min_t(unsigned int, current_ua,
++					   chip->thermal_icl_ua[chip->thermal_level - 1]);
++		smb5_set_current_limit(chip, current_ua);
++	}
+ 	mutex_unlock(&chip->lock);
++	smb5_update_joyeuse_battery_limits(chip);
+ 	power_supply_changed(chip->chg_psy);
+ }
+ 
+@@ -601,10 +787,18 @@
+ {
+ 	int rc;
+ 	union power_supply_propval status;
++	int usb_online;
+ 
+-	rc = power_supply_get_property(chip->chg_psy, POWER_SUPPLY_PROP_STATUS,
+-				       &status);
+-	if (rc < 0 || status.intval != POWER_SUPPLY_STATUS_CHARGING) {
++	if (chip->joyeuse) {
++		rc = smb5_get_prop_usb_online(chip, &usb_online);
++		if (rc < 0)
++			return rc;
++	} else {
++		rc = power_supply_get_property(chip->chg_psy,
++					       POWER_SUPPLY_PROP_STATUS, &status);
++		usb_online = !rc && status.intval == POWER_SUPPLY_STATUS_CHARGING;
++	}
++	if (!usb_online) {
+ 		*val = 0;
+ 		return 0;
+ 	}
+@@ -711,8 +905,14 @@
+ 		val->intval = chip->thermal_levels;
+ 		return 0;
+ 	case POWER_SUPPLY_PROP_CURRENT_NOW:
+-		return smb5_get_iio_chan(chip, chip->usb_in_i_chan,
+-					 &val->intval);
++		{
++			int ret = smb5_get_iio_chan(chip, chip->usb_in_i_chan,
++						    &val->intval);
++
++			if (!ret && chip->joyeuse)
++				val->intval *= 5;
++			return ret;
++		}
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+ 		return smb5_get_iio_chan(chip, chip->usb_in_v_chan,
+ 					 &val->intval);
+@@ -742,10 +942,23 @@
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+ 		mutex_lock(&chip->lock);
+ 		input_current = val->intval;
+-		if (chip->thermal_level)
+-			input_current = min_t(unsigned int, input_current,
++		if (chip->joyeuse) {
++			chip->typec_icl_ua = input_current;
++			rc = smb5_apply_icl_votes(chip);
++		} else {
++			if (chip->thermal_level)
++				input_current = min_t(unsigned int, input_current,
+ 						chip->thermal_icl_ua[chip->thermal_level - 1]);
+-		rc = smb5_set_current_limit(chip, input_current);
++			rc = smb5_set_current_limit(chip, input_current);
++		}
++		mutex_unlock(&chip->lock);
++		return rc;
++	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
++		if (!chip->joyeuse)
++			return -EINVAL;
++		mutex_lock(&chip->lock);
++		chip->contract_voltage_uv = val->intval;
++		rc = smb5_apply_icl_votes(chip);
+ 		mutex_unlock(&chip->lock);
+ 		return rc;
+ 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX:
+@@ -808,11 +1021,24 @@
+ static irqreturn_t smb5_handle_usb_plugin(int irq, void *data)
+ {
+ 	struct smb5_chip *chip = data;
++	int online;
++
++	if (chip->joyeuse && !smb5_get_prop_usb_online(chip, &online) && !online) {
++		mutex_lock(&chip->lock);
++		chip->typec_icl_ua = SDP_CURRENT_UA;
++		chip->apsd_icl_ua = SDP_CURRENT_UA;
++		chip->contract_voltage_uv = 0;
++		smb5_apply_icl_votes(chip);
++		mutex_unlock(&chip->lock);
++	}
+ 
+ 	power_supply_changed(chip->chg_psy);
+ 
+ 	schedule_delayed_work(&chip->status_change_work,
+ 			      msecs_to_jiffies(1500));
++	if (chip->joyeuse)
++		mod_delayed_work(system_wq, &chip->battery_policy_work,
++				 msecs_to_jiffies(1500));
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -1029,6 +1255,14 @@
+ 	chip->name = pdev->name;
+ 	chip->pm6150 = of_device_is_compatible(chip->dev->of_node,
+ 						"qcom,pm6150-charger");
++	chip->joyeuse = of_machine_is_compatible("xiaomi,joyeuse");
++	chip->typec_icl_ua = SDP_CURRENT_UA;
++	chip->apsd_icl_ua = SDP_CURRENT_UA;
++	chip->thermal_vote_icl_ua = SDP_CURRENT_UA;
++	chip->jeita_fcc_ua = 900000;
++	chip->jeita_fv_uv = 4450000;
++	chip->step_fcc_ua = PM6150_MAX_FCC_UA;
++	chip->jeita_suspend = chip->joyeuse;
+ 	mutex_init(&chip->lock);
+ 
+ 	chip->regmap = dev_get_regmap(pdev->dev.parent, NULL);
+@@ -1055,6 +1289,13 @@
+ 	rc = smb5_init_hw(chip);
+ 	if (rc < 0)
+ 		return rc;
++	if (chip->joyeuse) {
++		rc = regmap_update_bits(chip->regmap,
++				chip->base + CHARGING_ENABLE_CMD,
++				CHARGING_ENABLE_CMD_BIT, 0);
++		if (rc)
++			return rc;
++	}
+ 
+ 	supply_config.drv_data = chip;
+ 	supply_config.fwnode = dev_fwnode(&pdev->dev);
+@@ -1095,6 +1336,14 @@
+ 	if (rc)
+ 		return dev_err_probe(chip->dev, rc,
+ 				     "Failed to init status change work\n");
++	if (chip->joyeuse) {
++		rc = devm_delayed_work_autocancel(chip->dev,
++						  &chip->battery_policy_work,
++						  smb5_battery_policy_work);
++		if (rc)
++			return dev_err_probe(chip->dev, rc,
++					     "Failed to init battery policy work\n");
++	}
+ 
+ 	rc = smb5_init_irq(chip, &irq, "bat-ov", smb5_handle_batt_overvoltage);
+ 	if (rc < 0)
+@@ -1122,6 +1371,20 @@
+ 
+ 	/* Initialise charger state */
+ 	schedule_delayed_work(&chip->status_change_work, 0);
++	if (chip->joyeuse)
++		schedule_delayed_work(&chip->battery_policy_work, 0);
++	if (chip->joyeuse) {
++		chip->debug_root = debugfs_create_dir("pm6150-joyeuse", NULL);
++		if (!IS_ERR_OR_NULL(chip->debug_root)) {
++			debugfs_create_file("votes", 0444, chip->debug_root,
++					    chip, &smb5_votes_fops);
++			rc = devm_add_action_or_reset(chip->dev,
++						   smb5_remove_debugfs,
++						   chip->debug_root);
++			if (rc)
++				return rc;
++		}
++	}
+ 
+ 	return 0;
+ }

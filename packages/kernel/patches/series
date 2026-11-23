@@ -379,4 +379,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1319-iio-adc-qcom-spmi-adc5-add-bat-therm-channel.patch
 1320-arm64-dts-qcom-pm6150-add-qgauge-sdam-adc-nodes.patch
 1321-power-supply-qcom-pm6150-smb5-charger.patch
+1322-power-supply-joyeuse-usb-current-fallback.patch
+1323-power-supply-qcom-smb5-compatibility.patch
+1324-power-supply-port-joyeuse-smb5-and-smb1396.patch
 0020-ASoC-qcom-sc7180-allow-codec-dma-dais.patch
