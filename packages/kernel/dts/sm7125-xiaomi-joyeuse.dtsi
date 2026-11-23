@@ -80,3 +80,5 @@
 		};
 	};
 };
+
+#include "sm7125-xiaomi-joyeuse-charging.dtsi"

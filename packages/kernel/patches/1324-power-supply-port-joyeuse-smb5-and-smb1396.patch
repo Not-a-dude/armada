@@ -25298,7 +25298,7 @@ to select the driver and its battery profiles and authenticator.
  	unsigned int base;
  	u32 current_lsb_na;
  	bool joyeuse;
-+	bool stock_charger;
++	bool smb5_charger;
  
  	struct iio_channel *batt_therm_chan;
 +	struct iio_channel *batt_id_chan;
@@ -25589,7 +25589,7 @@ to select the driver and its battery profiles and authenticator.
 +	ocv_soc = qcom_qg_soc_from_ocv(chip,
 +		compute_live_ocv(v_now, i_now, t_dc, chip->joyeuse), t_dc);
  	plugged = qcom_qg_is_cable_plugged(chip);
-+	if (chip->stock_charger)
++	if (chip->smb5_charger)
 +		status = qcom_qg_charge_status(chip, plugged);
  
  	mutex_lock(&chip->soc_lock);
@@ -25641,7 +25641,7 @@ to select the driver and its battery profiles and authenticator.
  	if (plugged && v_now >= 4430000 && abs(i_now) < QG_REST_CURRENT_UA &&
  	    chip->rest_start_s && now - chip->rest_start_s >= QG_REST_TIME_S)
  		chip->soc_centi = 10000;
-+	if (chip->stock_charger) {
++	if (chip->smb5_charger) {
 +		if (status == POWER_SUPPLY_STATUS_FULL) {
 +			/* JEITA may terminate at a lower float voltage. */
 +			if (ocv_soc >= 9700 || (chip->soc_centi >= 9800 && ocv_soc >= 9000))
@@ -25708,7 +25708,7 @@ to select the driver and its battery profiles and authenticator.
 +	case POWER_SUPPLY_PROP_CYCLE_COUNT: {
 +		unsigned int total = 0;
 +
-+		if (!chip->stock_charger)
++		if (!chip->smb5_charger)
 +			return -ENODATA;
 +		mutex_lock(&chip->soc_lock);
 +		ret = qcom_qg_load_cycles(chip);
@@ -25729,7 +25729,7 @@ to select the driver and its battery profiles and authenticator.
 +		break;
 +
  	case POWER_SUPPLY_PROP_STATUS:
-+		if (chip->stock_charger) {
++		if (chip->smb5_charger) {
 +			val->intval = READ_ONCE(chip->charge_status);
 +			break;
 +		}
@@ -25750,7 +25750,7 @@ to select the driver and its battery profiles and authenticator.
  		break;
  	case POWER_SUPPLY_PROP_CURRENT_NOW:
 -		ret = qcom_qg_get_current(chip,
-+		if (chip->stock_charger)
++		if (chip->smb5_charger)
 +			ret = qcom_qg_get_burst_current(chip, &val->intval);
 +		else
 +			ret = qcom_qg_get_current(chip,
@@ -25771,7 +25771,7 @@ to select the driver and its battery profiles and authenticator.
 -			else
 -				val->intval = learned_mah * 1000;
 -		}
-+		val->intval = chip->stock_charger ? chip->full_uah :
++		val->intval = chip->smb5_charger ? chip->full_uah :
 +			      chip->batt_info->charge_full_design_uah;
  		break;
  	case POWER_SUPPLY_PROP_CAPACITY:
@@ -25786,7 +25786,7 @@ to select the driver and its battery profiles and authenticator.
 +	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
  		if (!chip->joyeuse)
  			return -EINVAL;
-+		if (!chip->stock_charger &&
++		if (!chip->smb5_charger &&
 +		    (psp == POWER_SUPPLY_PROP_CHARGE_COUNTER ||
 +		     psp == POWER_SUPPLY_PROP_TIME_TO_FULL_NOW))
 +			return -ENODATA;
@@ -25848,7 +25848,7 @@ to select the driver and its battery profiles and authenticator.
  
  	chip->dev = &pdev->dev;
  	chip->joyeuse = of_machine_is_compatible("xiaomi,joyeuse");
-+	chip->stock_charger = chip->joyeuse &&
++	chip->smb5_charger = chip->joyeuse &&
 +		device_property_present(chip->dev, "xiaomi,battery-auth");
  
  	/* Regmap */
@@ -25886,7 +25886,7 @@ to select the driver and its battery profiles and authenticator.
  		nvmem_device_write(chip->sdam, QG_SDAM_VALID_OFFSET, 1, &zero);
 +	}
 +	chip->full_uah = QG_CAPACITY_UAH;
-+	if (chip->stock_charger) {
++	if (chip->smb5_charger) {
 +		__le16 stored;
 +		u16 learned_mah;
 +
@@ -25905,7 +25905,7 @@ to select the driver and its battery profiles and authenticator.
  	if (!chip || !chip->sdam || chip->reported_soc < 0)
  		return;
 +	mutex_lock(&chip->soc_lock);
-+	if (chip->stock_charger)
++	if (chip->smb5_charger)
 +		qcom_qg_update_cycles(chip, POWER_SUPPLY_STATUS_NOT_CHARGING, true);
  	soc = chip->reported_soc;
  	nvmem_device_write(chip->sdam, QG_SDAM_SOC_OFFSET, 1, &soc);
@@ -25920,26 +25920,32 @@ to select the driver and its battery profiles and authenticator.
  static void qcom_qg_remove(struct platform_device *pdev)
 --- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec.c
 +++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec.c
-@@ -33,6 +33,15 @@
- {
- 	struct pmic_typec *tcpm = tcpc_to_tcpm(tcpc);
- 	union power_supply_propval val;
-+
-+	if (tcpm->charger && tcpm->tcpc.set_sink_limit) {
-+		if (!power_supply_get_property(tcpm->charger,
-+					       POWER_SUPPLY_PROP_REAL_TYPE, &val) &&
-+		    (val.intval == POWER_SUPPLY_TYPE_USB_CDP ||
-+		     val.intval == POWER_SUPPLY_TYPE_USB_DCP))
-+			return 1500;
-+		return 500;
-+	}
- 
- 	if (tcpm->charger &&
- 	    !power_supply_get_property(tcpm->charger,
-@@ -67,6 +76,72 @@
- 					 POWER_SUPPLY_PROP_CURRENT_MAX, &val);
+@@ -29,6 +29,19 @@
+ 	return 0;
  }
  
++static int qcom_pmic_typec_get_current_limit(struct tcpc_dev *tcpc)
++{
++	struct pmic_typec *tcpm = tcpc_to_tcpm(tcpc);
++	union power_supply_propval val;
++
++	if (!power_supply_get_property(tcpm->charger, POWER_SUPPLY_PROP_REAL_TYPE, &val) &&
++	    (val.intval == POWER_SUPPLY_TYPE_USB_CDP ||
++	     val.intval == POWER_SUPPLY_TYPE_USB_DCP))
++		return 1500;
++
++	return 500;
++}
++
+ static int qcom_pmic_typec_set_current_limit(struct tcpc_dev *tcpc,
+ 					     u32 max_ma, u32 mv)
+ {
+@@ -40,6 +53,72 @@
+ 
+ 	return power_supply_set_property(tcpm->charger,
+ 					 POWER_SUPPLY_PROP_CURRENT_MAX, &val);
++}
++
 +static int qcom_pmic_typec_set_sink_limit(struct tcpc_dev *tcpc, u32 ma,
 +					 u32 mv, bool pd, bool pps)
 +{
@@ -26004,12 +26010,10 @@ to select the driver and its battery profiles and authenticator.
 +	}
 +	of_node_put(node);
 +	return rc;
-+}
-+
+ }
+ 
  static int qcom_pmic_typec_probe(struct platform_device *pdev)
- {
- 	struct pmic_typec *tcpm;
-@@ -89,14 +164,22 @@
+@@ -64,12 +143,20 @@
  	tcpm->dev = dev;
  	tcpm->tcpc.init = qcom_pmic_typec_init;
  
@@ -26019,10 +26023,12 @@ to select the driver and its battery profiles and authenticator.
 -			return dev_err_probe(dev, PTR_ERR(tcpm->charger),
 -					     "failed to get charger supply\n");
 -		tcpm->charger = NULL;
-+	if (device_property_read_bool(dev, "xiaomi,stock-charger")) {
++	if (device_property_read_bool(dev, "xiaomi,smb5-tcpm")) {
 +		ret = qcom_pmic_typec_get_smb5(tcpm);
 +		if (ret)
 +			return dev_err_probe(dev, ret, "waiting for SMB5\n");
++		tcpm->tcpc.set_sink_limit = qcom_pmic_typec_set_sink_limit;
++		tcpm->tcpc.get_current_limit = qcom_pmic_typec_get_current_limit;
 +	} else {
 +		tcpm->charger = devm_power_supply_get_by_reference(dev, "qcom,charger");
 +		if (IS_ERR(tcpm->charger)) {
@@ -26033,11 +26039,7 @@ to select the driver and its battery profiles and authenticator.
 +		}
  	}
  	tcpm->tcpc.set_current_limit = qcom_pmic_typec_set_current_limit;
-+	if (tcpm->charger && device_property_read_bool(dev, "xiaomi,stock-charger"))
-+		tcpm->tcpc.set_sink_limit = qcom_pmic_typec_set_sink_limit;
- 	if (of_machine_is_compatible("xiaomi,joyeuse"))
- 		tcpm->tcpc.get_current_limit =
- 			qcom_pmic_typec_get_current_limit;
+ 
 --- a/drivers/usb/typec/tcpm/tcpm.c
 +++ b/drivers/usb/typec/tcpm/tcpm.c
 @@ -531,6 +531,7 @@

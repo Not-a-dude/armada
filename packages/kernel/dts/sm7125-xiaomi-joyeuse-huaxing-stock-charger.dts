@@ -1,8 +1,0 @@
-// SPDX-License-Identifier: GPL-2.0-only
-
-#include "sm7125-xiaomi-joyeuse-huaxing.dts"
-#include "sm7125-xiaomi-joyeuse-charging.dtsi"
-
-/ {
-	model = "Xiaomi Joyeuse Huaxing (SMB5 and SMB1396)";
-};
