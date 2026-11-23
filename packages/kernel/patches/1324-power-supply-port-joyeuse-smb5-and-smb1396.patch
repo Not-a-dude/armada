@@ -23891,7 +23891,7 @@ to select the driver and its battery profiles and authenticator.
 +#endif /* __SMB5_CHARGER_REG_H */
 --- /dev/null
 +++ b/drivers/power/supply/qcom-joyeuse/step-chg-jeita.c
-@@ -0,0 +1,1177 @@
+@@ -0,0 +1,1169 @@
 +/* Copyright (c) 2017-2019 The Linux Foundation. All rights reserved.
 + * Copyright (C) 2020 XiaoMi, Inc.
 + *
@@ -24406,14 +24406,6 @@ to select the driver and its battery profiles and authenticator.
 +		}
 +
 +		*new_index = (i - 1);
-+		*val = range[*new_index].value;
-+	}
-+
-+	if (threshold < range[0].low_threshold) {
-+		*new_index = 0;
-+		*val = range[*new_index].value;
-+	} else if (threshold > range[MAX_STEP_CHG_ENTRIES - 1].low_threshold) {
-+		*new_index = MAX_STEP_CHG_ENTRIES - 1;
 +		*val = range[*new_index].value;
 +	}
 +
