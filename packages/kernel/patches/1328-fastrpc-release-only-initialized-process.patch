@@ -1,0 +1,57 @@
+From: Armada Linux <armada@localhost>
+Date: Wed, 25 Nov 2026 15:40:00 +0700
+Subject: [PATCH] misc: fastrpc: release only initialized DSP processes
+
+Closing a FastRPC device currently sends INIT_RELEASE even when no process
+was attached or created. In particular, a failed or timed out INIT_CREATE
+is followed by an unrelated release RPC during fd teardown. Track successful
+initialization so the release request is sent only for a live DSP process.
+---
+ drivers/misc/fastrpc.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -306,6 +306,7 @@ struct fastrpc_user {
+ 	int client_id;
+ 	int pd;
+ 	bool is_secure_dev;
++	bool initialized;
+ 	/* Lock for lists */
+ 	spinlock_t lock;
+ 	/* lock for allocations */
+@@ -1703,7 +1704,8 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
+ 	struct fastrpc_invoke_ctx *ctx, *n;
+ 	unsigned long flags;
+ 
+-	fastrpc_release_current_dsp_process(fl);
++	if (fl->initialized)
++		fastrpc_release_current_dsp_process(fl);
+ 
+ 	spin_lock_irqsave(&cctx->lock, flags);
+ 	list_del(&fl->user);
+@@ -2266,13 +2268,21 @@ static long fastrpc_device_ioctl(struct file *file, unsigned int cmd,
+ 	case FASTRPC_IOCTL_INIT_ATTACH:
+ 		err = fastrpc_init_attach(fl, ROOT_PD);
++		if (!err)
++			fl->initialized = true;
+ 		break;
+ 	case FASTRPC_IOCTL_INIT_ATTACH_SNS:
+ 		err = fastrpc_init_attach(fl, SENSORS_PD);
++		if (!err)
++			fl->initialized = true;
+ 		break;
+ 	case FASTRPC_IOCTL_INIT_CREATE_STATIC:
+ 		err = fastrpc_init_create_static_process(fl, argp);
++		if (!err)
++			fl->initialized = true;
+ 		break;
+ 	case FASTRPC_IOCTL_INIT_CREATE:
+ 		err = fastrpc_init_create_process(fl, argp);
++		if (!err)
++			fl->initialized = true;
+ 		break;
+ 	case FASTRPC_IOCTL_ALLOC_DMA_BUFF:
+-- 
+2.52.0
