@@ -1,0 +1,9 @@
+package = firmware-xiaomi-miatoll
+version = 5-r0
+url = https://mirror.postmarketos.org/postmarketos/master/aarch64/firmware-xiaomi-miatoll-5-r0.apk
+sha256 = eb6089e19ded03719fb75fb6d4406b9b7822c84e3910c0aef224560b4ce122fb
+upstream = https://github.com/sm7125-mainline/firmware-xiaomi-miatoll
+license = proprietary
+
+The signed and unsigned CDSP FastRPC shells and benchmark skeleton were
+extracted from the same APK as the CDSP firmware in usr/lib/firmware.

@@ -1,0 +1,73 @@
+From: Armada Linux <armada@localhost>
+Date: Wed, 25 Nov 2026 14:30:00 +0700
+Subject: [PATCH] misc: fastrpc: copy user PD shell through uaccess
+
+FASTRPC_IOCTL_INIT_CREATE accepts a userspace pointer to the PD shell when
+filefd is zero. The internal kernel invoke path treats every unmapped input
+as a kernel pointer and copies the shell with memcpy(), which faults under
+PAN. Duplicate that input into kernel memory before invoking the DSP and
+release it on both success and failure.
+---
+ drivers/misc/fastrpc.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -20,5 +20,6 @@
+ #include <linux/scatterlist.h>
+ #include <linux/slab.h>
++#include <linux/string.h>
+ #include <linux/firmware/qcom/qcom_scm.h>
+ #include <uapi/misc/fastrpc.h>
+ #include <linux/of_reserved_mem.h>
+@@ -1538,6 +1539,7 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
+ 	struct fastrpc_phy_page pages[1];
+ 	struct fastrpc_map *map = NULL;
+ 	struct fastrpc_buf *imem = NULL;
++	void *shell = NULL;
+ 	int memlen;
+ 	int err;
+ 	struct {
+@@ -1589,6 +1591,16 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
+ 			goto err;
+ 	}
+ 
++	if (init.filelen && !init.filefd) {
++		shell = vmemdup_user((void __user *)(uintptr_t)init.file,
++				      init.filelen);
++		if (IS_ERR(shell)) {
++			err = PTR_ERR(shell);
++			shell = NULL;
++			goto err_alloc;
++		}
++	}
++
+ 	memlen = ALIGN(max(INIT_FILELEN_MAX, (int)init.filelen * 4),
+ 		       1024 * 1024);
+ 	err = fastrpc_buf_alloc(fl, fl->sctx->dev, memlen,
+@@ -1603,6 +1615,6 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
+ 	args[1].length = inbuf.namelen;
+ 	args[1].fd = -1;
+ 
+-	args[2].ptr = (u64) init.file;
++	args[2].ptr = shell ? (u64)(uintptr_t)shell : init.file;
+ 	args[2].length = inbuf.filelen;
+ 	args[2].fd = init.filefd;
+@@ -1633,5 +1645,6 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
+ 		goto err_invoke;
+ 
+ 	kfree(args);
++	kvfree(shell);
+ 
+ 	return 0;
+@@ -1642,6 +1655,7 @@ err_invoke:
+ 	fl->init_mem = NULL;
+ 	fastrpc_buf_free(imem);
+ err_alloc:
++	kvfree(shell);
+ 	fastrpc_map_put(map);
+ err:
+ 	kfree(args);
+-- 
+2.47.0

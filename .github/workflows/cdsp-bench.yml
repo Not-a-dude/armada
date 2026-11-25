@@ -1,0 +1,28 @@
+name: CDSP benchmark
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install LLVM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld llvm
+      - name: Build ARM host and Hexagon module
+        run: |
+          set -euxo pipefail
+          mkdir -p out
+          clang -O3 -Wall -Wextra -o out/armada-cdsp-bench tools/cdsp-bench/bench_host.c -ldl
+          clang --target=hexagon -mcpu=hexagonv65 -mhvx -O3 -ffreestanding -fPIC \
+            -shared -nostdlib -fuse-ld=lld -Wl,-soname,libarmada_bench_skel.so \
+            -o out/libarmada_bench_skel.so tools/cdsp-bench/bench_dsp.c
+          llvm-readelf -h out/libarmada_bench_skel.so
+          llvm-readelf -Ws out/libarmada_bench_skel.so | grep armada_bench_skel_invoke
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: joyeuse-cdsp-benchmark
+          path: out/

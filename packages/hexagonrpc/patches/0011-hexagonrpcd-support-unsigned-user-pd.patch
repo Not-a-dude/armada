@@ -1,0 +1,62 @@
+From: Armada Linux <armada@localhost>
+Date: Wed, 25 Nov 2026 15:30:00 +0700
+Subject: [PATCH] hexagonrpcd: allow creating an unsigned user PD
+
+The CDSP firmware ships a separate unsigned FastRPC shell. Add an explicit
+option to request the unsigned process attribute when creating that shell.
+---
+ hexagonrpcd/rpcd.c | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/hexagonrpcd/rpcd.c b/hexagonrpcd/rpcd.c
+--- a/hexagonrpcd/rpcd.c
++++ b/hexagonrpcd/rpcd.c
+@@ -141,9 +141,10 @@ static void print_usage(const char *argv0)
+ 	       "\t-p PROGRAM\tRun client program with shared file descriptor\n"
+ 	       "\t-R DIR\t\tRoot directory of served files (default: /usr/share/qcom/)\n"
+-	       "\t-s\t\tAttach to sensorspd\n");
++	       "\t-s\t\tAttach to sensorspd\n"
++	       "\t-u\t\tCreate an unsigned user PD\n");
+ }
+ 
+-static int create_shell_pd(int fd, const char *create_shell)
++static int create_shell_pd(int fd, const char *create_shell, bool unsigned_pd)
+ {
+ 	char *buf;
+ 	int shellfd, ret;
+@@ -151,6 +152,6 @@ static int create_shell_pd(int fd, const char *create_shell)
+ 	struct fastrpc_alloc_dma_buf dmabuf;
+ 	long page_size;
+ 	struct fastrpc_init_create init = {
+-		.attrs = 0,
++		.attrs = unsigned_pd ? FASTRPC_MODE_UNSIGNED_MODULE : 0,
+ 		.siglen = 0,
+ 	};
+@@ -419,4 +420,5 @@ int main(int argc, char* argv[])
+ 	int fd, ret, opt;
+ 	bool attach_sns = false;
++	bool unsigned_pd = false;
+ 
+ 	progs = malloc(sizeof(const char *) * argc);
+@@ -438,2 +440,2 @@ int main(int argc, char* argv[])
+-	while ((opt = getopt(argc, argv, "c:d:f:p:R:s")) != -1) {
++	while ((opt = getopt(argc, argv, "c:d:f:p:R:su")) != -1) {
+ 		switch (opt) {
+@@ -456,4 +458,7 @@ int main(int argc, char* argv[])
+ 			case 's':
+ 				attach_sns = true;
+ 				break;
++			case 'u':
++				unsigned_pd = true;
++				break;
+ 			default:
+@@ -478,6 +483,6 @@ int main(int argc, char* argv[])
+ 	if (attach_sns)
+ 		ret = ioctl(fd, FASTRPC_IOCTL_INIT_ATTACH_SNS, NULL);
+ 	else if (create_shell != NULL)
+-		ret = create_shell_pd(fd, create_shell);
++		ret = create_shell_pd(fd, create_shell, unsigned_pd);
+ 	else
+ 		ret = ioctl(fd, FASTRPC_IOCTL_INIT_ATTACH, NULL);
+-- 
+2.47.0
