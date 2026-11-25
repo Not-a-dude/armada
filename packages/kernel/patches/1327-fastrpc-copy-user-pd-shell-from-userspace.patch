@@ -14,14 +14,15 @@ release it on both success and failure.
 diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
 --- a/drivers/misc/fastrpc.c
 +++ b/drivers/misc/fastrpc.c
-@@ -20,5 +20,6 @@
+@@ -19,6 +19,7 @@
+ #include <linux/rpmsg.h>
  #include <linux/scatterlist.h>
  #include <linux/slab.h>
 +#include <linux/string.h>
  #include <linux/firmware/qcom/qcom_scm.h>
  #include <uapi/misc/fastrpc.h>
  #include <linux/of_reserved_mem.h>
-@@ -1538,6 +1539,7 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
+@@ -1539,6 +1540,7 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
  	struct fastrpc_phy_page pages[1];
  	struct fastrpc_map *map = NULL;
  	struct fastrpc_buf *imem = NULL;
@@ -29,7 +30,7 @@ diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
  	int memlen;
  	int err;
  	struct {
-@@ -1589,6 +1591,16 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
+@@ -1588,6 +1590,16 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
  			goto err;
  	}
  
@@ -46,7 +47,7 @@ diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
  	memlen = ALIGN(max(INIT_FILELEN_MAX, (int)init.filelen * 4),
  		       1024 * 1024);
  	err = fastrpc_buf_alloc(fl, fl->sctx->dev, memlen,
-@@ -1603,6 +1615,6 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
+@@ -1604,7 +1616,7 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
  	args[1].length = inbuf.namelen;
  	args[1].fd = -1;
  
@@ -54,14 +55,16 @@ diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
 +	args[2].ptr = shell ? (u64)(uintptr_t)shell : init.file;
  	args[2].length = inbuf.filelen;
  	args[2].fd = init.filefd;
-@@ -1633,5 +1645,6 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
+ 
+@@ -1633,6 +1645,7 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
  		goto err_invoke;
  
  	kfree(args);
 +	kvfree(shell);
  
  	return 0;
-@@ -1642,6 +1655,7 @@ err_invoke:
+ 
+@@ -1640,6 +1653,7 @@ err_invoke:
  	fl->init_mem = NULL;
  	fastrpc_buf_free(imem);
  err_alloc:
