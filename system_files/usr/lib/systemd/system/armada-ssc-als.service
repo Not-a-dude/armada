@@ -1,0 +1,15 @@
+[Unit]
+Description=Publish Qualcomm SSC illuminance to IIO
+After=armada-ssc.service
+BindsTo=armada-ssc.service
+ConditionPathExists=/sys/bus/platform/devices/ssc-als/illuminance_lux
+ConditionPathIsDirectory=/usr/share/armada/ssc/xiaomi-joyeuse
+
+[Service]
+ExecStart=/usr/libexec/armada/armada-ssc-als /sys/bus/platform/devices/ssc-als/illuminance_lux
+ExecStopPost=-/bin/sh -c 'echo -1 > /sys/bus/platform/devices/ssc-als/illuminance_lux'
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

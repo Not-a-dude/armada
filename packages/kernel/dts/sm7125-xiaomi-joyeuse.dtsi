@@ -13,6 +13,10 @@
 	/* required for bootloader to select correct board */
 	qcom,board-id = <0x50022 1>;
 
+	ssc-als {
+		compatible = "xiaomi,joyeuse-ssc-als";
+	};
+
 	ultra_avdd_2p8: regulator-ultra-avdd-2p8 {
 		compatible = "regulator-fixed";
 		regulator-name = "ultra_avdd_2p8";

@@ -1,0 +1,158 @@
+Subject: [PATCH] iio: light: export SSC illuminance for Joyeuse
+
+Joyeuse exposes its ambient light sensor through the ADSP and userspace
+libssc. Add an IIO device named als so consumers such as Steam can read
+the calibrated illuminance. Report ENODATA until the first sample and
+after the publisher invalidates it.
+
+diff --git a/drivers/iio/light/Kconfig b/drivers/iio/light/Kconfig
+index f23bbce..a0943e8 100644
+--- a/drivers/iio/light/Kconfig
++++ b/drivers/iio/light/Kconfig
+@@ -136,6 +136,17 @@ config APDS9999
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called apds9999.
+ 
++config ARMADA_SSC_ALS
++	tristate "Armada SSC ambient light sensor"
++	depends on OF
++	help
++	  Expose illuminance reported by the userspace Qualcomm SSC client
++	  as an IIO light channel. The sensor is managed by the ADSP,
++	  and a userspace client publishes the measured lux to the driver.
++
++	  To compile this driver as a module, choose M here. The module
++	  will be called armada-ssc-als.
++
+ config AS73211
+ 	tristate "AMS AS73211 XYZ color sensor and AMS AS7331 UV sensor"
+ 	depends on I2C
+diff --git a/drivers/iio/light/Makefile b/drivers/iio/light/Makefile
+index 64e354c..271d046 100644
+--- a/drivers/iio/light/Makefile
++++ b/drivers/iio/light/Makefile
+@@ -15,6 +15,7 @@ obj-$(CONFIG_APDS9300)		+= apds9300.o
+ obj-$(CONFIG_APDS9306)		+= apds9306.o
+ obj-$(CONFIG_APDS9960)		+= apds9960.o
+ obj-$(CONFIG_APDS9999)		+= apds9999.o
++obj-$(CONFIG_ARMADA_SSC_ALS)	+= armada-ssc-als.o
+ obj-$(CONFIG_AS73211)		+= as73211.o
+ obj-$(CONFIG_BH1745)		+= bh1745.o
+ obj-$(CONFIG_BH1750)		+= bh1750.o
+diff --git a/drivers/iio/light/armada-ssc-als.c b/drivers/iio/light/armada-ssc-als.c
+new file mode 100644
+index 0000000..063d6f2
+--- /dev/null
++++ b/drivers/iio/light/armada-ssc-als.c
+@@ -0,0 +1,111 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/device.h>
++#include <linux/iio/iio.h>
++#include <linux/kstrtox.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++
++struct armada_ssc_als {
++	int lux;
++};
++
++static int armada_ssc_als_read_raw(struct iio_dev *indio_dev,
++				  const struct iio_chan_spec *chan,
++				  int *val, int *val2, long mask)
++{
++	struct armada_ssc_als *als = iio_priv(indio_dev);
++	int lux;
++
++	switch (mask) {
++	case IIO_CHAN_INFO_RAW:
++		lux = READ_ONCE(als->lux);
++		if (lux < 0)
++			return -ENODATA;
++		*val = lux;
++		return IIO_VAL_INT;
++	case IIO_CHAN_INFO_SCALE:
++		*val = 1;
++		return IIO_VAL_INT;
++	default:
++		return -EINVAL;
++	}
++}
++
++static ssize_t illuminance_lux_store(struct device *dev,
++				     struct device_attribute *attr,
++				     const char *buf, size_t count)
++{
++	struct armada_ssc_als *als = dev_get_drvdata(dev);
++	int lux, ret;
++
++	ret = kstrtoint(buf, 10, &lux);
++	if (ret)
++		return ret;
++
++	/* The publisher writes -1 on exit to invalidate its last sample. */
++	if (lux < -1)
++		return -EINVAL;
++
++	WRITE_ONCE(als->lux, lux);
++	return count;
++}
++static DEVICE_ATTR_WO(illuminance_lux);
++
++static struct attribute *armada_ssc_als_attrs[] = {
++	&dev_attr_illuminance_lux.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(armada_ssc_als);
++
++static const struct iio_chan_spec armada_ssc_als_channel = {
++	.type = IIO_LIGHT,
++	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) | BIT(IIO_CHAN_INFO_SCALE),
++};
++
++static const struct iio_info armada_ssc_als_info = {
++	.read_raw = armada_ssc_als_read_raw,
++};
++
++static int armada_ssc_als_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct armada_ssc_als *als;
++	struct iio_dev *indio_dev;
++
++	indio_dev = devm_iio_device_alloc(dev, sizeof(*als));
++	if (!indio_dev)
++		return -ENOMEM;
++
++	als = iio_priv(indio_dev);
++	als->lux = -1;
++	platform_set_drvdata(pdev, als);
++
++	/* Steam uses this IIO device name for its generic ALS implementation. */
++	indio_dev->name = "als";
++	indio_dev->info = &armada_ssc_als_info;
++	indio_dev->modes = INDIO_DIRECT_MODE;
++	indio_dev->channels = &armada_ssc_als_channel;
++	indio_dev->num_channels = 1;
++
++	return devm_iio_device_register(dev, indio_dev);
++}
++
++static const struct of_device_id armada_ssc_als_of_match[] = {
++	{ .compatible = "xiaomi,joyeuse-ssc-als" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, armada_ssc_als_of_match);
++
++static struct platform_driver armada_ssc_als_driver = {
++	.probe = armada_ssc_als_probe,
++	.driver = {
++		.name = "armada-ssc-als",
++		.of_match_table = armada_ssc_als_of_match,
++		.dev_groups = armada_ssc_als_groups,
++	},
++};
++module_platform_driver(armada_ssc_als_driver);
++
++MODULE_DESCRIPTION("Armada Qualcomm SSC ambient light sensor bridge");
++MODULE_LICENSE("GPL");

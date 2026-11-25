@@ -1,0 +1,110 @@
+#!/usr/bin/python3
+"""Publish calibrated illuminance from libssc to the Armada IIO driver."""
+
+import ctypes as C
+import math
+import signal
+import sys
+from pathlib import Path
+
+
+class GError(C.Structure):
+    _fields_ = [("domain", C.c_uint), ("code", C.c_int), ("message", C.c_char_p)]
+
+
+def bind(library, name, result, *arguments):
+    function = getattr(library, name)
+    function.restype = result
+    function.argtypes = arguments
+    return function
+
+
+def publish(path):
+    glib = C.CDLL("libglib-2.0.so.0")
+    gobject = C.CDLL("libgobject-2.0.so.0")
+    ssc = C.CDLL("libssc.so.2")
+    pointer = C.c_void_p
+    error_pointer = C.POINTER(GError)
+    error_argument = C.POINTER(error_pointer)
+    measurement_callback = C.CFUNCTYPE(None, pointer, C.c_float, pointer)
+    signal_callback = C.CFUNCTYPE(C.c_int, pointer)
+
+    loop_new = bind(glib, "g_main_loop_new", pointer, pointer, C.c_int)
+    loop_run = bind(glib, "g_main_loop_run", None, pointer)
+    loop_quit = bind(glib, "g_main_loop_quit", None, pointer)
+    loop_unref = bind(glib, "g_main_loop_unref", None, pointer)
+    signal_add = bind(glib, "g_unix_signal_add", C.c_uint, C.c_int, signal_callback, pointer)
+    source_remove = bind(glib, "g_source_remove", C.c_int, C.c_uint)
+    error_free = bind(glib, "g_error_free", None, error_pointer)
+    object_unref = bind(gobject, "g_object_unref", None, pointer)
+    connect = bind(gobject, "g_signal_connect_data", C.c_ulong,
+                   pointer, C.c_char_p, measurement_callback, pointer, pointer, C.c_uint)
+    new_sensor = bind(ssc, "ssc_sensor_light_new_sync", pointer, pointer, error_argument)
+    open_sensor = bind(ssc, "ssc_sensor_light_open_sync", C.c_int, pointer, pointer, error_argument)
+    close_sensor = bind(ssc, "ssc_sensor_light_close_sync", C.c_int, pointer, pointer, error_argument)
+
+    def check(result, error, action):
+        if result:
+            return result
+        message = error.contents.message.decode(errors="replace") if error else "unknown error"
+        if error:
+            error_free(error)
+        raise RuntimeError(f"{action}: {message}")
+
+    loop = loop_new(None, 0)
+    sensor = None
+    opened = False
+    failure = None
+    last_lux = None
+
+    @signal_callback
+    def stop(_data):
+        loop_quit(loop)
+        return 1
+
+    @measurement_callback
+    def measurement(_sensor, value, _data):
+        nonlocal failure, last_lux
+        if not math.isfinite(value) or not 0 <= value <= 2_147_483_647:
+            return
+        lux = round(value)
+        if lux == last_lux:
+            return
+        try:
+            path.write_text(f"{lux}\n", encoding="ascii")
+        except OSError as error:
+            failure = error
+            loop_quit(loop)
+        else:
+            last_lux = lux
+
+    stop_sources = [signal_add(signum, stop, None) for signum in (signal.SIGTERM, signal.SIGINT)]
+    try:
+        error = error_pointer()
+        sensor = check(new_sensor(None, C.byref(error)), error, "Initialize SSC light sensor")
+        connect(sensor, b"measurement", measurement, None, None, 0)
+        opened = bool(check(open_sensor(sensor, None, C.byref(error)), error,
+                            "Open SSC light sensor"))
+        if failure is None:
+            loop_run(loop)
+        if failure is not None:
+            raise failure
+    finally:
+        try:
+            if opened:
+                error = error_pointer()
+                if not close_sensor(sensor, None, C.byref(error)) and error:
+                    error_free(error)
+        finally:
+            if sensor:
+                object_unref(sensor)
+            for source in stop_sources:
+                source_remove(source)
+            loop_unref(loop)
+
+
+if __name__ == "__main__":
+    try:
+        publish(Path(sys.argv[1]))
+    except (OSError, RuntimeError) as error:
+        sys.exit(str(error))

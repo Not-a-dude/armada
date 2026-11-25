@@ -382,6 +382,7 @@ v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch
 1323-power-supply-qcom-smb5-compatibility.patch
 1324-power-supply-port-joyeuse-smb5-and-smb1396.patch
 1325-remoteproc-qcom-add-sc7180-cdsp.patch
+1326-iio-light-add-armada-ssc-als.patch
 1327-fastrpc-copy-user-pd-shell-from-userspace.patch
 1328-fastrpc-release-only-initialized-process.patch
 0020-ASoC-qcom-sc7180-allow-codec-dma-dais.patch
