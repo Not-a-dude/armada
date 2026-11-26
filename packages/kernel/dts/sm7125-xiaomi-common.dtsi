@@ -562,6 +562,12 @@
 	memory-region = <&cdsp_mem>;
 	firmware-name = "qcom/sm7125/miatoll/cdsp.mbn";
 	status = "okay";
+
+	glink-edge {
+		fastrpc {
+			compatible = "qcom,sm7125-fastrpc", "qcom,fastrpc";
+		};
+	};
 };
 
 &remoteproc_mpss {

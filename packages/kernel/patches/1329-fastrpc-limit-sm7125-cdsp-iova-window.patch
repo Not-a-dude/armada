@@ -1,0 +1,69 @@
+From: Armada Linux <armada@localhost>
+Date: Thu, 26 Nov 2026 19:00:00 +0700
+Subject: [PATCH] misc: fastrpc: limit SM7125 CDSP IOVAs to firmware window
+
+SM7125 CDSP firmware uses a 0x80000000-0xf7ffffff FastRPC IOVA window.
+The mainline IOMMU DMA allocator otherwise places the first coherent buffer
+at 0xfffff000, outside that window. Limit the context-bank DMA bus address
+before any allocation; the generic FastRPC path remains unchanged.
+---
+ Documentation/devicetree/bindings/misc/qcom,fastrpc.yaml | 3 +++
+ drivers/misc/fastrpc.c                                    | 13 +++++++++++++
+ 2 files changed, 16 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/misc/qcom,fastrpc.yaml b/Documentation/devicetree/bindings/misc/qcom,fastrpc.yaml
+--- a/Documentation/devicetree/bindings/misc/qcom,fastrpc.yaml
++++ b/Documentation/devicetree/bindings/misc/qcom,fastrpc.yaml
+@@ -22,6 +22,9 @@ properties:
+       - enum:
+           - qcom,kaanapali-fastrpc
+           - qcom,fastrpc
++      - items:
++          - const: qcom,sm7125-fastrpc
++          - const: qcom,fastrpc
+       - items:
+           - enum:
+               - qcom,glymur-fastrpc
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -263,6 +263,7 @@ struct fastrpc_soc_data {
+ 	u32 sid_pos;
+ 	u32 dma_addr_bits_cdsp;
+ 	u32 dma_addr_bits_default;
++	u32 dma_iova_limit_cdsp;
+ };
+ 
+ struct fastrpc_channel_ctx {
+@@ -2340,4 +2341,8 @@ static int fastrpc_cb_probe(struct platform_device *pdev)
+ 	if (cctx->domain_id == CDSP_DOMAIN_ID)
+ 		dma_bits = cctx->soc_data->dma_addr_bits_cdsp;
++	if (cctx->domain_id == CDSP_DOMAIN_ID &&
++	    cctx->soc_data->dma_iova_limit_cdsp)
++		dev->bus_dma_limit = min_not_zero(dev->bus_dma_limit,
++					(u64)cctx->soc_data->dma_iova_limit_cdsp);
+ 
+ 	if (of_property_read_u32(dev->of_node, "reg", &sess->sid))
+@@ -2450,6 +2455,13 @@ static const struct fastrpc_soc_data default_soc_data = {
+ 	.dma_addr_bits_default = 32,
+ };
+ 
++static const struct fastrpc_soc_data sm7125_soc_data = {
++	.sid_pos = 32,
++	.dma_addr_bits_cdsp = 32,
++	.dma_addr_bits_default = 32,
++	.dma_iova_limit_cdsp = 0xf7ffffff,
++};
++
+ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
+ {
+ 	struct device *rdev = &rpdev->dev;
+@@ -2665,5 +2677,6 @@ static int fastrpc_rpmsg_callback(struct rpmsg_device *rpdev,
+ static const struct of_device_id fastrpc_rpmsg_of_match[] = {
+ 	{ .compatible = "qcom,kaanapali-fastrpc", .data = &kaanapali_soc_data },
++	{ .compatible = "qcom,sm7125-fastrpc", .data = &sm7125_soc_data },
+ 	{ .compatible = "qcom,fastrpc", .data = &default_soc_data },
+ 	{ },
+ };
+-- 
+2.52.0
