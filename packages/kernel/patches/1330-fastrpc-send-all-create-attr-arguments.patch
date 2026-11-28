@@ -1,0 +1,33 @@
+From: Armada Linux <armada@localhost>
+Date: Sat, 28 Nov 2026 18:00:00 +0700
+Subject: [PATCH] misc: fastrpc: include attributes in INIT_CREATE_ATTR scalars
+
+The user-PD creation code fills six input arguments. The plain INIT_CREATE
+method uses the first four, but INIT_CREATE_ATTR also needs the attributes
+and signature length in arguments four and five. Advertising only four
+input buffers drops both arguments from the payload. Match the six-buffer
+wire format used by the SM6150 CDSP firmware.
+---
+ drivers/misc/fastrpc.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
+--- a/drivers/misc/fastrpc.c
++++ b/drivers/misc/fastrpc.c
+@@ -1623,9 +1623,11 @@ static int fastrpc_init_create_process(struct fastrpc_user *fl,
+ 	args[5].length = sizeof(inbuf.siglen);
+ 	args[5].fd = -1;
+ 
+-	sc = FASTRPC_SCALARS(FASTRPC_RMID_INIT_CREATE, 4, 0);
+-	if (init.attrs)
+-		sc = FASTRPC_SCALARS(FASTRPC_RMID_INIT_CREATE_ATTR, 4, 0);
++	if (init.attrs)
++		sc = FASTRPC_SCALARS(FASTRPC_RMID_INIT_CREATE_ATTR,
++				    FASTRPC_CREATE_PROCESS_NARGS, 0);
++	else
++		sc = FASTRPC_SCALARS(FASTRPC_RMID_INIT_CREATE, 4, 0);
+ 
+ 	err = fastrpc_internal_invoke(fl, true, FASTRPC_INIT_HANDLE,
+ 				      sc, args);
+-- 
+2.52.0
